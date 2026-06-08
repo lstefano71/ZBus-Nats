@@ -85,22 +85,10 @@ public sealed class ZValue
     private string AsStringFromChar32(int count)
     {
         var span = MemoryMarshal.Cast<byte, int>(_bytes.AsSpan());
-        // UTF-32 codepoints may require surrogate pairs
-        return string.Create(count, span.ToArray(), static (dest, codepoints) =>
-        {
-            int di = 0;
-            for (int i = 0; i < codepoints.Length && di < dest.Length; i++)
-            {
-                if (codepoints[i] <= 0xFFFF)
-                    dest[di++] = (char)codepoints[i];
-                else
-                {
-                    // This path won't fit in pre-allocated length — need surrogate
-                    // For now, use replacement character for simplicity
-                    dest[di++] = (char)codepoints[i]; // will truncate high bits
-                }
-            }
-        });
+        var builder = new StringBuilder(count * 2);
+        for (int i = 0; i < count; i++)
+            builder.Append(char.ConvertFromUtf32(span[i]));
+        return builder.ToString();
     }
 
     /// <summary>Read as int array. Supports APLBOOL, APLSINT, APLINTG, APLLONG, APLQUAD.</summary>
@@ -243,32 +231,11 @@ public sealed class ZValue
     {
         long totalElements = 1;
         foreach (var dim in shape) totalElements *= dim;
-        if (data.Length != totalElements)
+        var runes = data.EnumerateRunes().ToArray();
+        if (runes.Length != totalElements)
             throw new ArgumentException($"Expected {totalElements} characters for shape");
 
-        // Determine width
-        int maxCodepoint = 0;
-        foreach (char c in data) maxCodepoint = Math.Max(maxCodepoint, c);
-        ElType eltype = maxCodepoint <= 255 ? ElType.APLWCHAR8 : (maxCodepoint <= 65535 ? ElType.APLWCHAR16 : ElType.APLWCHAR32);
-
-        byte[] bytes;
-        switch (eltype)
-        {
-            case ElType.APLWCHAR8:
-                bytes = new byte[data.Length];
-                for (int i = 0; i < data.Length; i++) bytes[i] = (byte)data[i];
-                break;
-            case ElType.APLWCHAR16:
-                bytes = new byte[data.Length * 2];
-                var u16 = MemoryMarshal.Cast<byte, ushort>(bytes.AsSpan());
-                for (int i = 0; i < data.Length; i++) u16[i] = (ushort)data[i];
-                break;
-            default: // APLWCHAR32
-                bytes = new byte[data.Length * 4];
-                var u32 = MemoryMarshal.Cast<byte, int>(bytes.AsSpan());
-                for (int i = 0; i < data.Length; i++) u32[i] = data[i];
-                break;
-        }
+        var bytes = EncodeRunes(runes, out var eltype);
         return new ZValue(ZValueKind.CharVector, Zones.Simple(shape.Length, eltype), shape, bytes);
     }
 
@@ -277,37 +244,35 @@ public sealed class ZValue
         if (s.Length == 0)
             return new ZValue(ZValueKind.CharVector, Zones.Simple(1, ElType.APLWCHAR8), [0], []);
 
-        // Determine minimum character width
-        int maxCodepoint = 0;
-        foreach (char c in s)
-            if (c > maxCodepoint) maxCodepoint = c;
+        var runes = s.EnumerateRunes().ToArray();
+        var bytes = EncodeRunes(runes, out var eltype);
+        return new ZValue(ZValueKind.CharVector, Zones.Simple(1, eltype), [runes.Length], bytes);
+    }
 
-        // Note: doesn't handle surrogate pairs for codepoints > 0xFFFF from C# strings.
-        // For full support, iterate Rune by Rune.
-        if (maxCodepoint <= 255)
+    private static byte[] EncodeRunes(Rune[] runes, out ElType eltype)
+    {
+        int maxCodepoint = 0;
+        foreach (var rune in runes)
+            maxCodepoint = Math.Max(maxCodepoint, rune.Value);
+
+        eltype = maxCodepoint <= 255 ? ElType.APLWCHAR8 : (maxCodepoint <= 65535 ? ElType.APLWCHAR16 : ElType.APLWCHAR32);
+
+        switch (eltype)
         {
-            var bytes = new byte[s.Length];
-            for (int i = 0; i < s.Length; i++)
-                bytes[i] = (byte)s[i];
-            return new ZValue(ZValueKind.CharVector, Zones.Simple(1, ElType.APLWCHAR8), [s.Length], bytes);
-        }
-        else if (maxCodepoint <= 65535)
-        {
-            var bytes = new byte[s.Length * 2];
-            var span = MemoryMarshal.Cast<byte, ushort>(bytes.AsSpan());
-            for (int i = 0; i < s.Length; i++)
-                span[i] = s[i];
-            return new ZValue(ZValueKind.CharVector, Zones.Simple(1, ElType.APLWCHAR16), [s.Length], bytes);
-        }
-        else
-        {
-            // Full UTF-32 path
-            var runes = s.EnumerateRunes().ToArray();
-            var bytes = new byte[runes.Length * 4];
-            var span = MemoryMarshal.Cast<byte, int>(bytes.AsSpan());
-            for (int i = 0; i < runes.Length; i++)
-                span[i] = runes[i].Value;
-            return new ZValue(ZValueKind.CharVector, Zones.Simple(1, ElType.APLWCHAR32), [runes.Length], bytes);
+            case ElType.APLWCHAR8:
+                var bytes8 = new byte[runes.Length];
+                for (int i = 0; i < runes.Length; i++) bytes8[i] = (byte)runes[i].Value;
+                return bytes8;
+            case ElType.APLWCHAR16:
+                var bytes16 = new byte[runes.Length * 2];
+                var u16 = MemoryMarshal.Cast<byte, ushort>(bytes16.AsSpan());
+                for (int i = 0; i < runes.Length; i++) u16[i] = (ushort)runes[i].Value;
+                return bytes16;
+            default:
+                var bytes32 = new byte[runes.Length * 4];
+                var u32 = MemoryMarshal.Cast<byte, int>(bytes32.AsSpan());
+                for (int i = 0; i < runes.Length; i++) u32[i] = runes[i].Value;
+                return bytes32;
         }
     }
 

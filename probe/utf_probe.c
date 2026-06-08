@@ -2,6 +2,7 @@
 // Build: cl /LD /O2 utf_probe.c /Fe:utf_probe.dll
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
@@ -28,7 +29,7 @@ EXPORT void probe_t1(const char* str, int len) {
     fprintf(logfile, "probe_t1: len=%d bytes:", len);
     for (int i = 0; i < len; i++)
         fprintf(logfile, " %02X", (unsigned char)str[i]);
-    fprintf(logfile, " text=\"%s\"\n", str);
+    fprintf(logfile, " text=\"%.*s\"\n", len, str);
     fflush(logfile);
 }
 
@@ -38,7 +39,7 @@ EXPORT void probe_utf8(const char* str, int len) {
     fprintf(logfile, "probe_utf8: len=%d bytes:", len);
     for (int i = 0; i < len; i++)
         fprintf(logfile, " %02X", (unsigned char)str[i]);
-    fprintf(logfile, " text=\"%s\"\n", str);
+    fprintf(logfile, " text=\"%.*s\"\n", len, str);
     fflush(logfile);
 }
 

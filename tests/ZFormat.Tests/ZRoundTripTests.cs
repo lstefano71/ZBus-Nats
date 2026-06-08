@@ -379,6 +379,7 @@ public class ZRoundTripTests
     {
         // '😀' as APLWCHAR32 scalar (rank-0!)
         // U+1F600 = 0x0001F600, stored LE as 00 F6 01 00
+        string emoji = char.ConvertFromUtf32(0x1F600);
         byte[] dump = [
             0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0xA4,
             0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -390,6 +391,31 @@ public class ZRoundTripTests
         Assert.Equal(ZValueKind.Scalar, result.Kind);
         Assert.Equal(ElType.APLWCHAR32, result.Zones.ElType);
         Assert.Equal(0, result.Zones.Rank);
+        Assert.Equal(emoji, result.AsString());
+    }
+
+    [Fact]
+    public void Write_EmojiString_UsesAPLWCHAR32SingleCodepoint()
+    {
+        string emoji = char.ConvertFromUtf32(0x1F600);
+        var buf = ZWriter.ToBytes(ZValue.FromString(emoji));
+
+        long zones = MemoryMarshal.Read<long>(buf.AsSpan(16));
+        Assert.Equal(0x291FL, zones); // TYPESIMPLE|rank1|APLWCHAR32|squoze
+
+        long shape = MemoryMarshal.Read<long>(buf.AsSpan(24));
+        Assert.Equal(1L, shape);
+        Assert.Equal([0x00, 0xF6, 0x01, 0x00], buf[32..36]);
+    }
+
+    [Fact]
+    public void RoundTrip_EmojiString()
+    {
+        string emoji = char.ConvertFromUtf32(0x1F600);
+        var decoded = ZReader.Read(ZWriter.ToBytes(ZValue.FromString(emoji)));
+
+        Assert.Equal(ElType.APLWCHAR32, decoded.Zones.ElType);
+        Assert.Equal(emoji, decoded.AsString());
     }
 
     [Fact]
