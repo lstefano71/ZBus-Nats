@@ -1,0 +1,146 @@
+⍝ Squeeze/squoze research script
+⍝ Tests what happens to values of different storage widths when passed through ⎕NA Z format.
+⍝ Key insight from docs:
+⍝   - Monadic ⎕DR returns type AFTER squeeze
+⍝   - 181⌶ returns type WITHOUT squeeze attempt
+⍝   - Dyadic ⎕DR (0 type ⎕DR value) converts AND pins type (prevents future squeeze)
+⍝   - Workspace compaction squeezes arrays to smallest representation
+
+dll←'D:\devel\Z-Format\samples\ZProbeManaged\ZProbeManaged\bin\Release\net10.0\win-x64\native\ZProbeManaged'
+
+⍝ Link squeeze test functions
+'zsint'    ⎕NA dll,'|z_int_sint >Z'
+'zintg'    ⎕NA dll,'|z_int_intg >Z'
+'zlong'    ⎕NA dll,'|z_int_long >Z'
+'zsqueeze' ⎕NA dll,'|z_int_squeezed >Z'
+'zvsint'   ⎕NA dll,'|z_vec_sint >Z'
+'zvlong'   ⎕NA dll,'|z_vec_long >Z'
+'zecho'    ⎕NA dll,'|z_echo =Z'
+
+⎕←'══════════════════════════════════════════'
+⎕←'SQUEEZE RESEARCH'
+⎕←'══════════════════════════════════════════'
+⎕←''
+⎕←'⎕DR codes: 11=bool, 83=int8, 163=int16, 323=int32, 645=float64, 1287=decf128'
+⎕←''
+
+⍝ --- Scalars at different widths ---
+⎕←'--- Scalar 42 from APLSINT (1 byte) ---'
+s←zsint 0
+⎕←'  Value: ',⍕s
+⎕←'  ⎕DR:   ',⍕⎕DR s
+⎕←'  181⌶:  ',⍕(181⌶)s
+⎕←''
+
+⎕←'--- Scalar 42 from APLINTG (2 byte) ---'
+s←zintg 0
+⎕←'  Value: ',⍕s
+⎕←'  ⎕DR:   ',⍕⎕DR s
+⎕←'  181⌶:  ',⍕(181⌶)s
+⎕←''
+
+⎕←'--- Scalar 42 from APLLONG (4 byte) ---'
+s←zlong 0
+⎕←'  Value: ',⍕s
+⎕←'  ⎕DR:   ',⍕⎕DR s
+⎕←'  181⌶:  ',⍕(181⌶)s
+⎕←''
+
+⎕←'--- Scalar 42 from auto-squeeze (FromInt) ---'
+s←zsqueeze 0
+⎕←'  Value: ',⍕s
+⎕←'  ⎕DR:   ',⍕⎕DR s
+⎕←'  181⌶:  ',⍕(181⌶)s
+⎕←''
+
+⍝ --- Vectors at different widths ---
+⎕←'--- Vector 1 2 3 from APLSINT (auto-squeezed) ---'
+v←zvsint 0
+⎕←'  Value: ',⍕v
+⎕←'  ⎕DR:   ',⍕⎕DR v
+⎕←'  181⌶:  ',⍕(181⌶)v
+⎕←''
+
+⎕←'--- Vector 1 2 3 from APLLONG (oversized 4-byte) ---'
+v←zvlong 0
+⎕←'  Value: ',⍕v
+⎕←'  ⎕DR:   ',⍕⎕DR v
+⎕←'  181⌶:  ',⍕(181⌶)v
+⎕←'  NOTE: If 181⌶ shows 323, APL did NOT squeeze on receipt from ⎕NA.'
+⎕←'        If 181⌶ shows 83, APL squeezed immediately on receipt.'
+⎕←''
+
+⍝ --- Round-trip: what does echo preserve? ---
+⎕←'══════════════════════════════════════════'
+⎕←'ROUND-TRIP: Does echo preserve storage type?'
+⎕←'══════════════════════════════════════════'
+⎕←''
+
+⎕←'--- Echo of APLSINT scalar 42 ---'
+s←zsint 0
+r←zecho ⊂s
+⎕←'  Before: ⎕DR=',⍕⎕DR s,'  181⌶=',⍕(181⌶)s
+⎕←'  After:  ⎕DR=',⍕⎕DR r,'  181⌶=',⍕(181⌶)r
+⎕←''
+
+⎕←'--- Echo of APLLONG scalar 42 ---'
+s←zlong 0
+r←zecho ⊂s
+⎕←'  Before: ⎕DR=',⍕⎕DR s,'  181⌶=',⍕(181⌶)s
+⎕←'  After:  ⎕DR=',⍕⎕DR r,'  181⌶=',⍕(181⌶)r
+⎕←''
+
+⎕←'--- Echo of APLLONG vector [1 2 3] ---'
+v←zvlong 0
+r←zecho ⊂v
+⎕←'  Before: ⎕DR=',⍕⎕DR v,'  181⌶=',⍕(181⌶)v
+⎕←'  After:  ⎕DR=',⍕⎕DR r,'  181⌶=',⍕(181⌶)r
+⎕←''
+
+⍝ --- Dyadic ⎕DR: pin type, then echo ---
+⎕←'══════════════════════════════════════════'
+⎕←'DYADIC ⎕DR: Pin type then round-trip'
+⎕←'(dyadic ⎕DR prevents squeeze)'
+⎕←'══════════════════════════════════════════'
+⎕←''
+
+⎕←'--- Pin 42 to 645 (APLDOUB), then echo ---'
+s←⊃0 645 ⎕DR 42
+⎕←'  Pinned:     ⎕DR=',⍕⎕DR s,'  181⌶=',⍕(181⌶)s,'  Value=',⍕s
+r←zecho ⊂s
+⎕←'  After echo: ⎕DR=',⍕⎕DR r,'  181⌶=',⍕(181⌶)r,'  Value=',⍕r
+⎕←''
+
+⎕←'--- Pin 1 2 3 to 323 (APLLONG), then echo ---'
+v←⊃0 323 ⎕DR 1 2 3
+⎕←'  Pinned:     ⎕DR=',⍕⎕DR v,'  181⌶=',⍕(181⌶)v,'  Value=',⍕v
+r←zecho ⊂v
+⎕←'  After echo: ⎕DR=',⍕⎕DR r,'  181⌶=',⍕(181⌶)r,'  Value=',⍕r
+⎕←''
+
+⎕←'--- Pin 42 to 163 (APLINTG 16-bit), then echo ---'
+s←⊃0 163 ⎕DR 42
+⎕←'  Pinned:     ⎕DR=',⍕⎕DR s,'  181⌶=',⍕(181⌶)s,'  Value=',⍕s
+r←zecho ⊂s
+⎕←'  After echo: ⎕DR=',⍕⎕DR r,'  181⌶=',⍕(181⌶)r,'  Value=',⍕r
+⎕←''
+
+⍝ --- Does our squoze flag in zones matter? ---
+⎕←'══════════════════════════════════════════'
+⎕←'SQUOZE FLAG: Our Z buffer sets squoze=1.'
+⎕←'Does APL honour it or ignore it?'
+⎕←'══════════════════════════════════════════'
+⎕←''
+
+⎕←'--- APLLONG vector [1 2 3] from DLL (squoze=1 in zones) ---'
+v←zvlong 0
+⎕←'  181⌶ immediately after ⎕NA return: ',⍕(181⌶)v
+⎕←'  If 323 → APL received oversized storage and kept it (squoze bit means "already squeezed"?)'
+⎕←'  If 83  → APL squeezed regardless of our squoze flag'
+⎕←''
+
+⎕←'══════════════════════════════════════════'
+⎕←'DONE'
+⎕←'══════════════════════════════════════════'
+
+⎕OFF 0

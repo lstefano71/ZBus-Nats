@@ -26,6 +26,7 @@ public static unsafe class ZWriter
     /// <summary>Serialise a ZValue to a byte array.</summary>
     public static byte[] ToBytes(ZValue value)
     {
+        ValidateForWrite(value);
         int payloadSize = ComputePayloadSize(value);
         int totalSize = ZHeaderSize + payloadSize;
         var buf = new byte[totalSize];
@@ -45,6 +46,7 @@ public static unsafe class ZWriter
     /// <summary>Write a ZValue to a >Z or =Z output pointer (native memory).</summary>
     public static void WriteToNative(nint zResult, ZValue value)
     {
+        ValidateForWrite(value);
         int payloadSize = ComputePayloadSize(value);
         int totalSize = ZHeaderSize + payloadSize;
 
@@ -76,7 +78,7 @@ public static unsafe class ZWriter
 
     private static int ComputePayloadSize(ZValue value)
     {
-        if (value.Kind == ZValueKind.Nested)
+        if (value.Type == ZType.Nested)
             return ComputeNestedPayloadSize(value);
 
         int rank = value.Zones.Rank;
@@ -100,6 +102,14 @@ public static unsafe class ZWriter
     {
         int rank = value.Zones.Rank;
         int rootHeader = 8 + 8 + rank * 8; // wc + zones + shape
+
+        if (value.ElementCount == 0)
+        {
+            // Empty nested: serialize the prototype as 1 phantom child
+            int protoSize = value.Prototype != null ? ComputePayloadSize(value.Prototype) : 0;
+            return rootHeader + protoSize;
+        }
+
         int childrenSize = 0;
         foreach (var child in value.Children)
             childrenSize += ComputePayloadSize(child);
@@ -112,7 +122,7 @@ public static unsafe class ZWriter
 
     private static void WritePayload(byte[] buf, ref int offset, ZValue value)
     {
-        if (value.Kind == ZValueKind.Nested)
+        if (value.Type == ZType.Nested)
         {
             WriteNested(buf, ref offset, value);
             return;
@@ -137,15 +147,26 @@ public static unsafe class ZWriter
     {
         int rank = value.Zones.Rank;
         long elementCount = value.ElementCount;
-        long rootWc = (16 + 8 + rank * 8 + elementCount * 8) / 8;
+
+        // For empty nested arrays, the root wc includes 1 pointer slot for the prototype
+        long wcSlots = elementCount == 0 && value.Prototype != null ? 1 : elementCount;
+        long rootWc = (16 + 8 + rank * 8 + wcSlots * 8) / 8;
 
         WriteInt64(buf, ref offset, rootWc);
         WriteInt64(buf, ref offset, value.Zones.Value);
         foreach (var dim in value.Shape)
             WriteInt64(buf, ref offset, dim);
 
-        foreach (var child in value.Children)
-            WritePayload(buf, ref offset, child);
+        if (elementCount == 0 && value.Prototype != null)
+        {
+            // Write prototype as phantom child
+            WritePayload(buf, ref offset, value.Prototype);
+        }
+        else
+        {
+            foreach (var child in value.Children)
+                WritePayload(buf, ref offset, child);
+        }
     }
 
     private static void WriteInt64(byte[] buf, ref int offset, long value)
@@ -160,7 +181,7 @@ public static unsafe class ZWriter
 
     private static void WritePayloadUnsafe(byte* buf, ref int offset, ZValue value)
     {
-        if (value.Kind == ZValueKind.Nested)
+        if (value.Type == ZType.Nested)
         {
             WriteNestedUnsafe(buf, ref offset, value);
             return;
@@ -186,7 +207,9 @@ public static unsafe class ZWriter
     {
         int rank = value.Zones.Rank;
         long elementCount = value.ElementCount;
-        long rootWc = (16 + 8 + rank * 8 + elementCount * 8) / 8;
+
+        long wcSlots = elementCount == 0 && value.Prototype != null ? 1 : elementCount;
+        long rootWc = (16 + 8 + rank * 8 + wcSlots * 8) / 8;
 
         *(long*)(buf + offset) = rootWc; offset += 8;
         *(long*)(buf + offset) = value.Zones.Value; offset += 8;
@@ -195,8 +218,27 @@ public static unsafe class ZWriter
             *(long*)(buf + offset) = dim; offset += 8;
         }
 
-        foreach (var child in value.Children)
-            WritePayloadUnsafe(buf, ref offset, child);
+        if (elementCount == 0 && value.Prototype != null)
+        {
+            WritePayloadUnsafe(buf, ref offset, value.Prototype);
+        }
+        else
+        {
+            foreach (var child in value.Children)
+                WritePayloadUnsafe(buf, ref offset, child);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Validation
+    // ═══════════════════════════════════════════════════════════════
+
+    private static void ValidateForWrite(ZValue value)
+    {
+        if (value.Type == ZType.Nested && value.ElementCount == 0 && value.Prototype == null)
+            throw new InvalidOperationException(
+                "Cannot serialise an empty nested array without a prototype — the interpreter crashes on these. " +
+                "Use ZValue.EmptyNested(prototype) to create one with a prototype, or use an empty simple array instead.");
     }
 
     // ═══════════════════════════════════════════════════════════════

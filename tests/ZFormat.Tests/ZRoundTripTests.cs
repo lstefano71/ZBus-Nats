@@ -18,7 +18,7 @@ public class ZRoundTripTests
     public void Write_AsciiString_MatchesInterpreterDump()
     {
         // Interpreter serialises 'hello' as APLWCHAR8, 1 byte/char
-        var buf = ZWriter.ToBytes(ZValue.FromString("hello"));
+        var buf = ZWriter.ToBytes(ZValue.FromChars("hello"));
 
         Assert.Equal(40, buf.Length);
         Assert.Equal(40, BinaryPrimitives.ReadInt32BigEndian(buf));
@@ -46,7 +46,7 @@ public class ZRoundTripTests
     {
         // 'café' — all codepoints ≤ 255, uses APLWCHAR8
         // 'é' = U+00E9 stored as byte 0xE9 (NOT UTF-8)
-        var buf = ZWriter.ToBytes(ZValue.FromString("café"));
+        var buf = ZWriter.ToBytes(ZValue.FromChars("café"));
 
         long zones = MemoryMarshal.Read<long>(buf.AsSpan(16));
         Assert.Equal(0x271FL, zones); // APLWCHAR8
@@ -64,7 +64,7 @@ public class ZRoundTripTests
     public void Write_GreekString_UsesAPLWCHAR16()
     {
         // 'αβγ' — codepoints > 255, uses APLWCHAR16
-        var buf = ZWriter.ToBytes(ZValue.FromString("αβγ"));
+        var buf = ZWriter.ToBytes(ZValue.FromChars("αβγ"));
 
         Assert.Equal(40, buf.Length); // 8+8+8+8+8(6 bytes padded to 8)
 
@@ -101,7 +101,7 @@ public class ZRoundTripTests
     [Fact]
     public void Write_IntSqueezed_FitsInByte()
     {
-        var buf = ZWriter.ToBytes(ZValue.FromIntSqueezed(42));
+        var buf = ZWriter.ToBytes(ZValue.FromInt(42));
         long zones = MemoryMarshal.Read<long>(buf.AsSpan(16));
         Assert.Equal(0x220FL, zones); // APLSINT (1 byte)
         Assert.Equal((byte)42, buf[24]);
@@ -110,7 +110,7 @@ public class ZRoundTripTests
     [Fact]
     public void Write_IntSqueezed_RequiresInt16()
     {
-        var buf = ZWriter.ToBytes(ZValue.FromIntSqueezed(1000));
+        var buf = ZWriter.ToBytes(ZValue.FromInt(1000));
         long zones = MemoryMarshal.Read<long>(buf.AsSpan(16));
         Assert.Equal(0x230FL, zones); // APLINTG (2 bytes)
         short val = MemoryMarshal.Read<short>(buf.AsSpan(24));
@@ -120,7 +120,7 @@ public class ZRoundTripTests
     [Fact]
     public void Write_IntSqueezed_RequiresInt32()
     {
-        var buf = ZWriter.ToBytes(ZValue.FromIntSqueezed(100000));
+        var buf = ZWriter.ToBytes(ZValue.FromInt(100000));
         long zones = MemoryMarshal.Read<long>(buf.AsSpan(16));
         Assert.Equal(0x240FL, zones); // APLLONG (4 bytes)
     }
@@ -141,7 +141,7 @@ public class ZRoundTripTests
     {
         // 0 1 0 1 0 1 0 1 → byte 0x55
         var bools = new bool[] { false, true, false, true, false, true, false, true };
-        var buf = ZWriter.ToBytes(ZValue.FromBooleans(bools));
+        var buf = ZWriter.ToBytes(ZValue.FromBools(bools));
 
         long zones = MemoryMarshal.Read<long>(buf.AsSpan(16));
         Assert.Equal(0x211FL, zones); // APLBOOL|rank1
@@ -157,7 +157,7 @@ public class ZRoundTripTests
     {
         // 1 0 → byte 0x80
         var bools = new bool[] { true, false };
-        var buf = ZWriter.ToBytes(ZValue.FromBooleans(bools));
+        var buf = ZWriter.ToBytes(ZValue.FromBools(bools));
 
         long shape = MemoryMarshal.Read<long>(buf.AsSpan(24));
         Assert.Equal(2L, shape);
@@ -168,7 +168,7 @@ public class ZRoundTripTests
     public void Write_NestedVector_IntAndString()
     {
         // (42 'hi') — matches probe dump exactly
-        var val = ZValue.Nested(ZValue.FromIntSqueezed(42), ZValue.FromString("hi"));
+        var val = ZValue.Nested(ZValue.FromInt(42), ZValue.FromChars("hi"));
         var buf = ZWriter.ToBytes(val);
 
         Assert.Equal(88, buf.Length);
@@ -219,18 +219,18 @@ public class ZRoundTripTests
     [Fact]
     public void Read_AsciiString()
     {
-        var buf = ZWriter.ToBytes(ZValue.FromString("hello"));
+        var buf = ZWriter.ToBytes(ZValue.FromChars("hello"));
         var result = ZReader.Read(buf);
 
-        Assert.Equal(ZValueKind.CharVector, result.Kind);
-        Assert.Equal(ElType.APLWCHAR8, result.Zones.ElType);
+        Assert.Equal(ZType.Char, result.Type);
+        Assert.Equal(ElType.APLWCHAR8, result.ElType);
         Assert.Equal("hello", result.AsString());
     }
 
     [Fact]
     public void Read_LatinString()
     {
-        var buf = ZWriter.ToBytes(ZValue.FromString("café"));
+        var buf = ZWriter.ToBytes(ZValue.FromChars("café"));
         var result = ZReader.Read(buf);
         Assert.Equal("café", result.AsString());
     }
@@ -238,10 +238,10 @@ public class ZRoundTripTests
     [Fact]
     public void Read_GreekString()
     {
-        var buf = ZWriter.ToBytes(ZValue.FromString("αβγ"));
+        var buf = ZWriter.ToBytes(ZValue.FromChars("αβγ"));
         var result = ZReader.Read(buf);
         Assert.Equal("αβγ", result.AsString());
-        Assert.Equal(ElType.APLWCHAR16, result.Zones.ElType);
+        Assert.Equal(ElType.APLWCHAR16, result.ElType);
     }
 
     [Fact]
@@ -250,17 +250,17 @@ public class ZRoundTripTests
         var buf = ZWriter.ToBytes(ZValue.FromInt32(42));
         var result = ZReader.Read(buf);
 
-        Assert.Equal(ZValueKind.Scalar, result.Kind);
+        Assert.Equal(ZType.Int, result.Type);
         Assert.Equal(42L, result.AsInt64());
     }
 
     [Fact]
     public void Read_SqueezedInt()
     {
-        var buf = ZWriter.ToBytes(ZValue.FromIntSqueezed(42));
+        var buf = ZWriter.ToBytes(ZValue.FromInt(42));
         var result = ZReader.Read(buf);
         Assert.Equal(42L, result.AsInt64());
-        Assert.Equal(ElType.APLSINT, result.Zones.ElType);
+        Assert.Equal(ElType.APLSINT, result.ElType);
     }
 
     [Fact]
@@ -275,7 +275,7 @@ public class ZRoundTripTests
     public void Read_BoolVector()
     {
         var bools = new bool[] { true, false, true, true, false, false, true, false };
-        var buf = ZWriter.ToBytes(ZValue.FromBooleans(bools));
+        var buf = ZWriter.ToBytes(ZValue.FromBools(bools));
         var result = ZReader.Read(buf);
 
         var ints = result.AsInt64Array();
@@ -289,7 +289,7 @@ public class ZRoundTripTests
         var buf = ZWriter.ToBytes(ZValue.FromBytes([1, 2, 3, 4, 5]));
         var result = ZReader.Read(buf);
 
-        Assert.Equal(ZValueKind.ByteVector, result.Kind);
+        Assert.Equal(ZType.Byte, result.Type);
         Assert.Equal(5L, result.Shape[0]);
         var ints = result.AsInt64Array();
         Assert.Equal([1, 2, 3, 4, 5], ints);
@@ -299,12 +299,12 @@ public class ZRoundTripTests
     public void Read_NestedVector()
     {
         var original = ZValue.Nested(
-            ZValue.FromIntSqueezed(42),
-            ZValue.FromString("hi"));
+            ZValue.FromInt(42),
+            ZValue.FromChars("hi"));
         var buf = ZWriter.ToBytes(original);
         var result = ZReader.Read(buf);
 
-        Assert.Equal(ZValueKind.Nested, result.Kind);
+        Assert.Equal(ZType.Nested, result.Type);
         Assert.Equal(2, result.Children.Length);
         Assert.Equal(42L, result.Children[0].AsInt64());
         Assert.Equal("hi", result.Children[1].AsString());
@@ -313,7 +313,7 @@ public class ZRoundTripTests
     [Fact]
     public void Read_EmptyString()
     {
-        var buf = ZWriter.ToBytes(ZValue.FromString(""));
+        var buf = ZWriter.ToBytes(ZValue.FromChars(""));
         var result = ZReader.Read(buf);
 
         Assert.Equal("", result.AsString());
@@ -338,7 +338,7 @@ public class ZRoundTripTests
 
         var result = ZReader.Read(dump);
         Assert.Equal("hello", result.AsString());
-        Assert.Equal(ElType.APLWCHAR8, result.Zones.ElType);
+        Assert.Equal(ElType.APLWCHAR8, result.ElType);
     }
 
     [Fact]
@@ -371,7 +371,7 @@ public class ZRoundTripTests
 
         var result = ZReader.Read(dump);
         Assert.Equal("αβγ", result.AsString());
-        Assert.Equal(ElType.APLWCHAR16, result.Zones.ElType);
+        Assert.Equal(ElType.APLWCHAR16, result.ElType);
     }
 
     [Fact]
@@ -388,9 +388,9 @@ public class ZRoundTripTests
         ];
 
         var result = ZReader.Read(dump);
-        Assert.Equal(ZValueKind.Scalar, result.Kind);
-        Assert.Equal(ElType.APLWCHAR32, result.Zones.ElType);
-        Assert.Equal(0, result.Zones.Rank);
+        Assert.Equal(ZType.Char, result.Type);
+        Assert.Equal(ElType.APLWCHAR32, result.ElType);
+        Assert.Equal(0, result.Shape.Length);
         Assert.Equal(emoji, result.AsString());
     }
 
@@ -398,7 +398,7 @@ public class ZRoundTripTests
     public void Write_EmojiString_UsesAPLWCHAR32SingleCodepoint()
     {
         string emoji = char.ConvertFromUtf32(0x1F600);
-        var buf = ZWriter.ToBytes(ZValue.FromString(emoji));
+        var buf = ZWriter.ToBytes(ZValue.FromChars(emoji));
 
         long zones = MemoryMarshal.Read<long>(buf.AsSpan(16));
         Assert.Equal(0x291FL, zones); // TYPESIMPLE|rank1|APLWCHAR32|squoze
@@ -412,9 +412,9 @@ public class ZRoundTripTests
     public void RoundTrip_EmojiString()
     {
         string emoji = char.ConvertFromUtf32(0x1F600);
-        var decoded = ZReader.Read(ZWriter.ToBytes(ZValue.FromString(emoji)));
+        var decoded = ZReader.Read(ZWriter.ToBytes(ZValue.FromChars(emoji)));
 
-        Assert.Equal(ElType.APLWCHAR32, decoded.Zones.ElType);
+        Assert.Equal(ElType.APLWCHAR32, decoded.ElType);
         Assert.Equal(emoji, decoded.AsString());
     }
 
@@ -431,7 +431,7 @@ public class ZRoundTripTests
 
         var result = ZReader.Read(dump);
         Assert.Equal(42L, result.AsInt64());
-        Assert.Equal(ElType.APLSINT, result.Zones.ElType);
+        Assert.Equal(ElType.APLSINT, result.ElType);
     }
 
     [Fact]
@@ -462,7 +462,7 @@ public class ZRoundTripTests
         ];
 
         var result = ZReader.Read(dump);
-        Assert.Equal(ElType.APLBOOL, result.Zones.ElType);
+        Assert.Equal(ElType.APLBOOL, result.ElType);
         var ints = result.AsInt64Array();
         Assert.Equal([0, 1, 0, 1, 0, 1, 0, 1], ints);
     }
@@ -486,7 +486,7 @@ public class ZRoundTripTests
         ];
 
         var result = ZReader.Read(dump);
-        Assert.Equal(ZValueKind.Nested, result.Kind);
+        Assert.Equal(ZType.Nested, result.Type);
         Assert.Equal(2, result.Children.Length);
         Assert.Equal(42L, result.Children[0].AsInt64());
         Assert.Equal("hi", result.Children[1].AsString());
@@ -506,7 +506,7 @@ public class ZRoundTripTests
         ];
 
         var result = ZReader.Read(dump);
-        Assert.Equal(2, result.Zones.Rank);
+        Assert.Equal(2, result.Shape.Length);
         Assert.Equal(2L, result.Shape[0]);
         Assert.Equal(3L, result.Shape[1]);
 
@@ -526,7 +526,7 @@ public class ZRoundTripTests
     [InlineData("αβγδ")]
     public void AllBufferSizes_AreMultipleOf8(string s)
     {
-        var buf = ZWriter.ToBytes(ZValue.FromString(s));
+        var buf = ZWriter.ToBytes(ZValue.FromChars(s));
         Assert.Equal(0, buf.Length % 8);
     }
 
@@ -535,11 +535,11 @@ public class ZRoundTripTests
     {
         var cases = new ZValue[]
         {
-            ZValue.FromIntSqueezed(0),
-            ZValue.FromIntSqueezed(1000),
-            ZValue.FromIntSqueezed(100000),
+            ZValue.FromInt(0),
+            ZValue.FromInt(1000),
+            ZValue.FromInt(100000),
             ZValue.FromDouble(1.5),
-            ZValue.FromBooleans([true, false, true]),
+            ZValue.FromBools([true, false, true]),
             ZValue.FromBytes([1, 2, 3, 4, 5]),
             ZValue.FromInt32Array([1, 2, 3]),
         };
@@ -594,8 +594,8 @@ public class ZRoundTripTests
         var buf = ZWriter.ToBytes(original);
         var decoded = ZReader.Read(buf);
 
-        Assert.Equal(ZValueKind.Scalar, decoded.Kind);
-        Assert.Equal(ElType.APLDECF_BID, decoded.Zones.ElType);
+        Assert.Equal(ZType.Decf, decoded.Type);
+        Assert.Equal(ElType.APLDECF_BID, decoded.ElType);
         Assert.Equal(9007199254740993L, decoded.AsDecfInt64());
     }
 
@@ -625,7 +625,7 @@ public class ZRoundTripTests
         data[32] = 0x21;
         BitConverter.GetBytes(0x3040000000000000L).CopyTo(data, 40);
 
-        var val = ZValue.FromDecfArray(data, 3);
+        var val = ZValue.FromDecfs(data, 3);
         var buf = ZWriter.ToBytes(val);
 
         Assert.Equal(80, buf.Length);
@@ -645,11 +645,11 @@ public class ZRoundTripTests
         data[16] = 200;
         BitConverter.GetBytes(0x3040000000000000L).CopyTo(data, 24);
 
-        var original = ZValue.FromDecfArray(data, 2);
+        var original = ZValue.FromDecfs(data, 2);
         var buf = ZWriter.ToBytes(original);
         var decoded = ZReader.Read(buf);
 
-        Assert.Equal(ZValueKind.DecfVector, decoded.Kind);
+        Assert.Equal(ZType.Decf, decoded.Type);
         Assert.Equal(2L, decoded.Shape[0]);
         Assert.Equal(data, decoded.AsDecfBytes());
     }
@@ -663,7 +663,7 @@ public class ZRoundTripTests
     {
         // 2 3⍴1 0 1 0 1 0 → 2×3 matrix packed flat
         var bools = new bool[] { true, false, true, false, true, false };
-        var val = ZValue.FromBooleans([2, 3], bools);
+        var val = ZValue.FromBools([2, 3], bools);
         var buf = ZWriter.ToBytes(val);
         var decoded = ZReader.Read(buf);
 
@@ -680,7 +680,7 @@ public class ZRoundTripTests
         // 3×5 boolean matrix = 15 bits total, flat packed, no per-row padding
         var bools = new bool[15];
         for (int i = 0; i < 15; i++) bools[i] = (i % 2 == 0); // alternating 1 0 1 0...
-        var val = ZValue.FromBooleans([3, 5], bools);
+        var val = ZValue.FromBools([3, 5], bools);
         var buf = ZWriter.ToBytes(val);
         var decoded = ZReader.Read(buf);
 
@@ -714,7 +714,7 @@ public class ZRoundTripTests
     {
         // 3×2 double matrix
         var data = new double[] { 1.1, 2.2, 3.3, 4.4, 5.5, 6.6 };
-        var val = ZValue.FromDoubleArray([3, 2], data);
+        var val = ZValue.FromDoubles([3, 2], data);
         var buf = ZWriter.ToBytes(val);
         var decoded = ZReader.Read(buf);
 
@@ -730,7 +730,7 @@ public class ZRoundTripTests
     public void RoundTrip_CharMatrix()
     {
         // 2×3 character matrix (like a 2-row 3-col char grid)
-        var val = ZValue.FromCharArray([2, 3], "ABCDEF");
+        var val = ZValue.FromChars([2, 3], "ABCDEF");
         var buf = ZWriter.ToBytes(val);
         var decoded = ZReader.Read(buf);
 
@@ -767,7 +767,7 @@ public class ZRoundTripTests
         // 3×3 = 9 bits → 2 bytes data → padded to 8 bytes in Z buffer
         var bools = new bool[9];
         bools[0] = true; bools[4] = true; bools[8] = true; // diagonal
-        var val = ZValue.FromBooleans([3, 3], bools);
+        var val = ZValue.FromBools([3, 3], bools);
         var buf = ZWriter.ToBytes(val);
 
         // Expected bits: 1 0 0 0 1 0 0 0 1 (then 7 zeros padding to byte boundary)
@@ -787,9 +787,124 @@ public class ZRoundTripTests
             var total = 1L;
             foreach (var d in shape) total *= d;
             var bools = new bool[(int)total];
-            var val = ZValue.FromBooleans(shape, bools);
+            var val = ZValue.FromBools(shape, bools);
             var buf = ZWriter.ToBytes(val);
             Assert.Equal(0, buf.Length % 8);
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Empty nested arrays with prototypes
+    // ═══════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void Read_EmptyNested_WithCharPrototype()
+    {
+        // Exact bytes the Dyalog 20.0 interpreter sends for 0⍴⊂''
+        byte[] dump = [
+            0x00, 0x00, 0x00, 0x38, 0x00, 0x00, 0x00, 0xA4, // Z header: size=56, flags
+            0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // wc=5
+            0x17, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // zones: TYPEGEN|rank1|APLPNTR
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // shape[0]=0
+            0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // prototype wc=4
+            0x1F, 0x27, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // prototype zones: TYPESIMPLE|rank1|APLWCHAR8|squoze
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  // prototype shape[0]=0
+        ];
+
+        var result = ZReader.Read(dump);
+
+        Assert.Equal(ZType.Nested, result.Type);
+        Assert.Equal(new long[] { 0 }, result.Shape);
+        Assert.Equal(0L, result.ElementCount);
+        Assert.NotNull(result.Prototype);
+        Assert.Equal(ZType.Char, result.Prototype!.Type);
+        Assert.Equal(new long[] { 0 }, result.Prototype.Shape);
+    }
+
+    [Fact]
+    public void RoundTrip_EmptyNested_CharPrototype()
+    {
+        var value = ZValue.EmptyNested(ZValue.FromChars(""));
+        var buf = ZWriter.ToBytes(value);
+        var decoded = ZReader.Read(buf);
+
+        Assert.Equal(ZType.Nested, decoded.Type);
+        Assert.Equal(new long[] { 0 }, decoded.Shape);
+        Assert.Equal(0L, decoded.ElementCount);
+        Assert.NotNull(decoded.Prototype);
+        Assert.Equal(ZType.Char, decoded.Prototype!.Type);
+    }
+
+    [Fact]
+    public void RoundTrip_EmptyNested_NumericPrototype()
+    {
+        var value = ZValue.EmptyNested(ZValue.FromInts([]));
+        var buf = ZWriter.ToBytes(value);
+        var decoded = ZReader.Read(buf);
+
+        Assert.Equal(ZType.Nested, decoded.Type);
+        Assert.Equal(0L, decoded.ElementCount);
+        Assert.NotNull(decoded.Prototype);
+        // FromInts([]) auto-squeezes to APLSINT → classified as Byte
+        Assert.Equal(ZType.Byte, decoded.Prototype!.Type);
+        Assert.Equal(new long[] { 0 }, decoded.Prototype.Shape);
+    }
+
+    [Fact]
+    public void RoundTrip_EmptyNested_NestedPrototype()
+    {
+        // 0⍴⊂('name' 42) — prototype is itself a nested array
+        var proto = ZValue.Nested(ZValue.FromChars("    "), ZValue.FromInt(0));
+        var value = ZValue.EmptyNested(proto);
+        var buf = ZWriter.ToBytes(value);
+        var decoded = ZReader.Read(buf);
+
+        Assert.Equal(ZType.Nested, decoded.Type);
+        Assert.Equal(0L, decoded.ElementCount);
+        Assert.NotNull(decoded.Prototype);
+        Assert.Equal(ZType.Nested, decoded.Prototype!.Type);
+        Assert.Equal(2, decoded.Prototype.Children.Length);
+    }
+
+    [Fact]
+    public void RoundTrip_EmptyNested_2DShape()
+    {
+        var value = ZValue.EmptyNested([0, 3], ZValue.FromChars(""));
+        var buf = ZWriter.ToBytes(value);
+        var decoded = ZReader.Read(buf);
+
+        Assert.Equal(ZType.Nested, decoded.Type);
+        Assert.Equal(new long[] { 0, 3 }, decoded.Shape);
+        Assert.Equal(0L, decoded.ElementCount);
+        Assert.NotNull(decoded.Prototype);
+    }
+
+    [Fact]
+    public void Write_EmptyNested_WithoutPrototype_Throws()
+    {
+        // Creating via internal FromNested with null prototype should fail validation
+        var value = ZValue.Nested(new long[] { 0 }, []);
+        Assert.Throws<InvalidOperationException>(() => ZWriter.ToBytes(value));
+    }
+
+    [Fact]
+    public void Read_EmptyNested_MatchesInterpreterBytes()
+    {
+        // Build an EmptyNested with char prototype and verify bytes match interpreter dump
+        var value = ZValue.EmptyNested(ZValue.FromChars(""));
+        var buf = ZWriter.ToBytes(value);
+
+        // Should produce the same 56-byte buffer the interpreter sends
+        byte[] expected = [
+            0x00, 0x00, 0x00, 0x38, 0x00, 0x00, 0x00, 0xA4,
+            0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x17, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x1F, 0x27, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        ];
+
+        Assert.Equal(expected, buf);
     }
 }

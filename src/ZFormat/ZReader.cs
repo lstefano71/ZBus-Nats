@@ -94,6 +94,16 @@ public static unsafe class ZReader
             long elementCount = 1;
             foreach (var dim in shape) elementCount *= dim;
 
+            if (elementCount == 0)
+            {
+                // Empty nested: the wire format includes 1 prototype child after the shape
+                // even though shape says 0 elements. Read it as the prototype.
+                ZValue? prototype = null;
+                if (offset < buffer.Length)
+                    prototype = ReadPocket(buffer, ref offset);
+                return ZValue.FromNested(zones, shape, [], prototype);
+            }
+
             var children = new ZValue[(int)elementCount];
             for (int i = 0; i < children.Length; i++)
                 children[i] = ReadPocket(buffer, ref offset);

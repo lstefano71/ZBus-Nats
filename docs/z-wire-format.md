@@ -446,9 +446,47 @@ When the interpreter loads any DLL via `⎕NA`, it probes two well-known exports
 
 ## Edge Cases and Warnings
 
-### Empty nested arrays crash the interpreter
+### Empty nested arrays require a prototype child
 
-A Z buffer encoding a 0-element nested array (TYPEGEN + APLPNTR with shape `[0]`) causes the interpreter to crash. **Never produce empty nested Z.** Use an empty simple array (e.g., empty char vector `''`) or a 1-element nested as a fallback.
+A Z buffer encoding a 0-element nested array (TYPEGEN + APLPNTR with shape containing a zero dimension) **must** include exactly 1 "phantom" child pocket after the shape — the **prototype**. This prototype determines the fill element structure used by APL's dyadic `↑` (take), `⌷` (index), etc.
+
+If the prototype child is omitted, the interpreter crashes. With the prototype, the format is fully supported.
+
+#### Wire layout for empty nested:
+
+```
+[Z header: 8 bytes]
+[Root: wc | zones(TYPEGEN|APLPNTR) | shape (with zero dim)]
+[Prototype: wc | zones | [shape] | data]    ← exactly 1 phantom child
+```
+
+The root `wc` includes 1 pointer slot for the prototype:
+```
+root_wc = (PocketHeader(16) + zones(8) + rank×8 + 1×pointer_slot(8)) / 8
+```
+
+#### Example: `0⍴⊂''` — 56 bytes
+
+```
+Offset  Qword   Meaning
+──────  ─────   ───────
+[0]     Z hdr   size=56 (BE), flags=0xA4 (BE)
+[8]     5       root wc = (16+8+8+1×8)/8 = 5
+[16]    0x0617  root zones: TYPEGEN|rank1|APLPNTR (no squoze)
+[24]    0       root shape[0]: 0 elements
+[32]    4       prototype wc (empty char vector)
+[40]    0x271F  prototype zones: TYPESIMPLE|rank1|APLWCHAR8|squoze
+[48]    0       prototype shape[0]: 0 chars
+```
+
+#### Prototype encoding rules (observed from Dyalog 20.0):
+
+- `0⍴⊂''` → prototype is empty char vector (APLWCHAR8, shape=[0])
+- `0⍴⊂⍬` → prototype is empty int vector (APLSINT, shape=[0])
+- `0⍴⊂('name' 42)` → prototype is nested: `('    ' 0)` (spaces + zero)
+- `(0 3)⍴⊂''` → rank-2, prototype is empty char vector
+
+Note: The interpreter generates **type-correct prototypes** (spaces for chars, zeros for numbers). When constructing Z buffers, use the same convention.
 
 ### The `to_z` workspace function is unsafe in DWA context
 
