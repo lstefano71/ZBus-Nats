@@ -1,0 +1,77 @@
+⍝ ZBus.Nats AOT smoke test
+⍝ Validates: Init → Connect → Subscribe → Publish → Wait for Msg → Close
+⍝ Requires nats-server running on localhost:4222
+
+⎕IO ⎕ML←1
+pass←1
+
+dll←'D:\devel\Z-Format\src\ZBus.Nats\bin\Release\net10.0\win-x64\publish\ZBus.Nats.dll'
+
+⍝ ── Define ⎕NA bindings ──────────────────────────────────────────────
+
+'zbus_init'         ⎕NA 'I4 ',dll,'|zbus_init <0T1 >Z'
+'zbus_wait'         ⎕NA 'I4 ',dll,'|zbus_wait& <0T1 I4 >Z >Z >Z'
+'zbus_close'        ⎕NA 'I4 ',dll,'|zbus_close <0T1'
+'zbus_exists'       ⎕NA 'I4 ',dll,'|zbus_exists <0T1'
+'nats_connect'      ⎕NA 'I4 ',dll,'|zbus_nats_connect <0T1 <0T1'
+'nats_pub'          ⎕NA 'I4 ',dll,'|zbus_nats_pub <0T1 <0T1 <Z'
+'nats_sub'          ⎕NA 'I4 ',dll,'|zbus_nats_sub <0T1 <0T1 =Z'
+
+⍝ ── Test 1: Init ─────────────────────────────────────────────────────
+
+⎕←'Test 1: Init'
+(rc rootName)←zbus_init 'N1' 0
+⎕←'  rc=',(⍕rc),' rootName=',rootName
+:If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+
+⍝ ── Test 2: Connect ──────────────────────────────────────────────────
+
+⎕←'Test 2: Connect'
+rc←nats_connect 'N1' 'nats://localhost:4222'
+⎕←'  connect rc=',⍕rc
+:If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+
+⍝ Wait for Connected event
+⎕←'  waiting for Connected event...'
+(rc obj evt data)←zbus_wait 'N1' 5000 0 0 0
+⎕←'  rc=',(⍕rc),' obj=',obj,' evt=',evt
+:If evt≢'Connected' ⋄ ⎕←'  FAIL (expected Connected, got ',evt,')' ⋄ pass←0 ⋄ :EndIf
+
+⍝ ── Test 3: Subscribe ────────────────────────────────────────────────
+
+⎕←'Test 3: Subscribe'
+(rc subName)←nats_sub 'N1' 'prices' 'test.prices'
+⎕←'  rc=',(⍕rc),' subName=',subName
+:If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+
+⍝ ── Test 4: Publish + receive ────────────────────────────────────────
+
+⎕←'Test 4: Publish and receive'
+rc←nats_pub 'N1' 'test.prices' 'hello NATS'
+⎕←'  pub rc=',⍕rc
+:If rc≠0 ⋄ ⎕←'  FAIL (publish)' ⋄ pass←0 ⋄ :EndIf
+
+⍝ Wait for Msg event
+(rc obj evt data)←zbus_wait 'N1' 5000 0 0 0
+⎕←'  rc=',(⍕rc),' obj=',obj,' evt=',evt
+:If evt≢'Msg'
+    ⎕←'  FAIL (expected Msg, got ',evt,')'
+    pass←0
+:Else
+    ⎕←'  payload subject: ',1⊃data
+    ⎕←'  SUCCESS — message received!'
+:EndIf
+
+⍝ ── Test 5: Close ────────────────────────────────────────────────────
+
+⎕←'Test 5: Close root'
+rc←zbus_close ⊂'N1'
+⎕←'  close rc=',⍕rc
+:If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+
+⎕←''
+:If pass
+    ⎕←'═══ ALL SMOKE TESTS PASSED ═══'
+:Else
+    ⎕←'*** SOME TESTS FAILED ***'
+:EndIf

@@ -72,3 +72,19 @@ Every `>Z` output parameter needs a placeholder argument (typically `0`) in the 
 'fn' ⎕NA 'I4 dll|fn <0T1 >Z >Z >Z'
 (rc a b c) ← fn 'arg' 0 0 0   ⍝ three >Z → three 0 placeholders
 ```
+
+### =Z to avoid placeholders
+
+When a verb has both Z input and Z output, use `=Z` to reuse one slot for both.
+The DLL reads input first, then overwrites the pointer with output. Saves an arg:
+```apl
+⍝ BAD: separate <Z input + >Z output = needs placeholder 0
+'sub' ⎕NA 'I4 dll|fn <0T1 <0T1 <Z >Z'
+(rc name) ← sub 'N1' 'leaf' 'subject' 0   ⍝ 0 = dummy for >Z
+
+⍝ GOOD: =Z serves double duty (input consumed, then output written)
+'sub' ⎕NA 'I4 dll|fn <0T1 <0T1 =Z'
+(rc name) ← sub 'N1' 'leaf' 'subject'     ⍝ no placeholder needed
+```
+Only use `>Z` when there is no Z input to reuse (e.g., `zbus_init`, `zbus_wait`).
+

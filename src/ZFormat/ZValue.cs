@@ -189,6 +189,35 @@ public sealed class ZValue
     }
 
     /// <summary>
+    /// Read as a byte array. For APLSINT, reinterprets signed bytes as unsigned.
+    /// For APLBOOL, expands bit-packed booleans to one byte per element (0 or 1).
+    /// </summary>
+    public byte[] AsBytes()
+    {
+        int count = (int)ElementCount;
+        switch (Zones.ElType)
+        {
+            case ElType.APLSINT:
+                // Signed bytes reinterpreted as unsigned — same memory layout
+                var result = new byte[count];
+                _bytes.AsSpan(0, count).CopyTo(result);
+                return result;
+            case ElType.APLBOOL:
+                // Bit-packed: expand to one byte per element
+                var expanded = new byte[count];
+                for (int i = 0; i < count; i++)
+                {
+                    int byteIdx = i / 8;
+                    int bitIdx = 7 - (i % 8); // MSB-first
+                    expanded[i] = (byte)((_bytes![byteIdx] >> bitIdx) & 1);
+                }
+                return expanded;
+            default:
+                throw new InvalidOperationException($"AsBytes requires APLSINT or APLBOOL, got {Zones.ElType}");
+        }
+    }
+
+    /// <summary>
     /// Read a DECF scalar as a 64-bit integer (valid only when the DECF represents an exact integer).
     /// Extracts coefficient from BID128 format assuming exponent=0.
     /// </summary>
