@@ -72,10 +72,10 @@ rtCounts←5000 5000 2500 1000
 :EndFor
 
 ⍝ ── Section 2: Publish + receive round-trip throughput ─────────────────
-⍝ Wait on ROOT (not sub leaf) — correct ZBus event delivery pattern.
+⍝ Wait on LEAF (subscription name) — tests the leaf waitpoint fix.
 
 ⎕←''
-⎕←'Publish + receive round-trip throughput'
+⎕←'Publish + receive round-trip throughput (LEAF WAIT)'
 ⎕←'size_bytes  count  msg/s  avg_latency_us  elapsed_s'
 :For idx :In ⍳≢sizes
     payloadSize←idx⊃sizes
@@ -85,21 +85,21 @@ rtCounts←5000 5000 2500 1000
     (rc rtSub)←nats_sub 'N1' ('rt',⍕idx) 'bench.rt'
     :If rc≠0 ⋄ fail 'FATAL: rt sub failed rc=',⍕rc ⋄ :EndIf
 
-    ⍝ Warmup with validation (wait on root)
+    ⍝ Warmup with validation (wait on leaf)
     :For i :In ⍳100
         rc←nats_pub 'N1' 'bench.rt' payload
         :If rc≠0 ⋄ fail 'WARMUP FAIL: nats_pub rc=',⍕rc ⋄ :EndIf
-        (rc obj evt data)←zbus_wait 'N1' 2000 0 0 0
+        (rc obj evt data)←zbus_wait rtSub 2000 0 0 0
         :If evt≢'Msg' ⋄ fail 'WARMUP FAIL: expected Msg got ',evt ⋄ :EndIf
         :If ~(payload payload_eq msg_payload data) ⋄ fail 'WARMUP FAIL: payload mismatch' ⋄ :EndIf
     :EndFor
 
-    ⍝ Timed: pub + wait on root per message
+    ⍝ Timed: pub + wait on LEAF per message
     t0←16 ⎕DT 'Z'
     :For i :In ⍳msgCount
         rc←nats_pub 'N1' 'bench.rt' payload
         :If rc≠0 ⋄ fail 'TIMED FAIL: nats_pub rc=',⍕rc ⋄ :EndIf
-        (rc obj evt data)←zbus_wait 'N1' 5000 0 0 0
+        (rc obj evt data)←zbus_wait rtSub 5000 0 0 0
         :If evt≢'Msg' ⋄ fail 'TIMED FAIL: expected Msg got ',evt ⋄ :EndIf
     :EndFor
     t1←16 ⎕DT 'Z'
