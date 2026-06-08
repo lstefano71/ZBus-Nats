@@ -202,8 +202,8 @@ payload←fanSize⍴'F'
 
     ⎕←(⍕numSubs),'  ',(⍕fanSize),'  ',(⍕fanCount),'  ',(⍕⌊fanCount÷(elapsed⌈1e¯9)),'  ',(⍕elapsed)
 
-    :For s :In ⍳numSubs
-        rc←zbus_close ⊂(s⊃subNames)
+    :For s :In subNames
+        rc←zbus_close ⊂s
         (rc obj evt data)←zbus_wait 'N1' 500 0 0 0
     :EndFor
 :EndFor
