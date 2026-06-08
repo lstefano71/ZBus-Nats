@@ -23,6 +23,7 @@ public sealed class NatsAdapter : IAdapter, IDisposable
     private NatsObjContext? _obj;
     private NatsSvcContext? _svc;
     private string _rootName = "";
+    private volatile bool _disposed;
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _subscriptions = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _subjectMap = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _objectTypes = new(StringComparer.OrdinalIgnoreCase);
@@ -45,6 +46,30 @@ public sealed class NatsAdapter : IAdapter, IDisposable
         _registry = registry;
     }
 
+    /// <summary>
+    /// Post an event safely — swallows exceptions if adapter is disposed or poster is broken.
+    /// Prevents unhandled exceptions from crossing into native code.
+    /// </summary>
+    private void SafePost(string objectName, string eventType, ZValue data)
+    {
+        if (_disposed) return;
+        try { _poster.PostEvent(objectName, eventType, data); }
+        catch { /* swallow — adapter is shutting down or poster is disposed */ }
+    }
+
+    /// <summary>
+    /// Fire-and-forget a Task, ensuring any unhandled exception is swallowed.
+    /// Prevents NativeAOT FailFast on unobserved task exceptions.
+    /// </summary>
+    private static void FireAndForget(Task task)
+    {
+        task.ContinueWith(static t =>
+        {
+            // Observe and swallow the exception to prevent UnobservedTaskException
+            _ = t.Exception;
+        }, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Connection
     // ═══════════════════════════════════════════════════════════════
@@ -56,7 +81,7 @@ public sealed class NatsAdapter : IAdapter, IDisposable
 
         _rootName = rootName;
         _url = url;
-        _ = ConnectAsync(rootName);
+        FireAndForget(ConnectAsync(rootName));
         return ReturnCodes.OK;
     }
 
@@ -71,7 +96,7 @@ public sealed class NatsAdapter : IAdapter, IDisposable
             conn.ConnectionDisconnected += (_, _) =>
             {
                 wasDisconnected = true;
-                _poster.PostEvent(rootName, "Disconnected", ZValue.EmptyChar);
+                SafePost(rootName, "Disconnected", ZValue.EmptyChar);
                 return ValueTask.CompletedTask;
             };
             conn.ConnectionOpened += (_, _) =>
@@ -80,13 +105,13 @@ public sealed class NatsAdapter : IAdapter, IDisposable
                 if (wasDisconnected)
                 {
                     wasDisconnected = false;
-                    _poster.PostEvent(rootName, "Reconnected", ZValue.EmptyChar);
+                    SafePost(rootName, "Reconnected", ZValue.EmptyChar);
                 }
                 return ValueTask.CompletedTask;
             };
             conn.ReconnectFailed += (_, _) =>
             {
-                _poster.PostEvent(rootName, "Error", ZValue.FromChars("Reconnect failed"));
+                SafePost(rootName, "Error", ZValue.FromChars("Reconnect failed"));
                 return ValueTask.CompletedTask;
             };
 
@@ -96,11 +121,11 @@ public sealed class NatsAdapter : IAdapter, IDisposable
             _kv = new NatsKVContext(_js);
             _obj = new NatsObjContext(_js);
             _svc = new NatsSvcContext(conn);
-            _poster.PostEvent(rootName, "Connected", ZValue.EmptyChar);
+            SafePost(rootName, "Connected", ZValue.EmptyChar);
         }
         catch (Exception ex)
         {
-            _poster.PostEvent(rootName, "Error", ZValue.FromChars(ex.Message));
+            SafePost(rootName, "Error", ZValue.FromChars(ex.Message));
         }
     }
 
@@ -135,7 +160,7 @@ public sealed class NatsAdapter : IAdapter, IDisposable
         var cts = new CancellationTokenSource();
         _subscriptions[fullName] = cts;
 
-        _ = ConsumeLoop(fullName, subject, queueGroup, cts.Token);
+        FireAndForget(ConsumeLoop(fullName, subject, queueGroup, cts.Token));
         return fullName;
     }
 
@@ -152,13 +177,13 @@ public sealed class NatsAdapter : IAdapter, IDisposable
                     msg.Data != null ? ZValue.FromBytes(msg.Data) : ZValue.EmptyNumeric,
                     headersValue
                 );
-                _poster.PostEvent(objectName, "Msg", data);
+                SafePost(objectName, "Msg", data);
             }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _poster.PostEvent(objectName, "Error", ZValue.FromChars(ex.Message));
+            SafePost(objectName, "Error", ZValue.FromChars(ex.Message));
         }
     }
 
@@ -188,7 +213,7 @@ public sealed class NatsAdapter : IAdapter, IDisposable
         var cts = new CancellationTokenSource();
         _subscriptions[fullName] = cts;
 
-        _ = RequestLoop(fullName, subject, payload, headers, timeoutMs, cts.Token);
+        FireAndForget(RequestLoop(fullName, subject, payload, headers, timeoutMs, cts.Token));
         return fullName;
     }
 
@@ -209,21 +234,21 @@ public sealed class NatsAdapter : IAdapter, IDisposable
                 reply.Data != null ? ZValue.FromBytes(reply.Data) : ZValue.EmptyNumeric,
                 headersValue
             );
-            _poster.PostEvent(objectName, "Reply", data);
+            SafePost(objectName, "Reply", data);
         }
         catch (OperationCanceledException)
         {
             if (!ct.IsCancellationRequested)
-                _poster.PostEvent(objectName, "Timeout", ZValue.EmptyNumeric);
+                SafePost(objectName, "Timeout", ZValue.EmptyNumeric);
         }
         catch (Exception ex) when (ex.GetType().Name.Contains("NoResponders") ||
                                     ex.Message.Contains("no responders", StringComparison.OrdinalIgnoreCase))
         {
-            _poster.PostEvent(objectName, "Timeout", ZValue.EmptyNumeric);
+            SafePost(objectName, "Timeout", ZValue.EmptyNumeric);
         }
         catch (Exception ex)
         {
-            _poster.PostEvent(objectName, "Error", ZValue.FromChars(ex.Message));
+            SafePost(objectName, "Error", ZValue.FromChars(ex.Message));
         }
         finally
         {
@@ -312,7 +337,7 @@ public sealed class NatsAdapter : IAdapter, IDisposable
         var cts = new CancellationTokenSource();
         _subscriptions[fullName] = cts;
 
-        _ = JsConsumeLoop(fullName, consumer, cts.Token);
+        FireAndForget(JsConsumeLoop(fullName, consumer, cts.Token));
         return fullName;
     }
 
@@ -334,13 +359,13 @@ public sealed class NatsAdapter : IAdapter, IDisposable
                     headersValue,
                     ZValue.FromInt(seq)
                 );
-                _poster.PostEvent(objectName, "JsMsg", data);
+                SafePost(objectName, "JsMsg", data);
             }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _poster.PostEvent(objectName, "Error", ZValue.FromChars(ex.Message));
+            SafePost(objectName, "Error", ZValue.FromChars(ex.Message));
         }
     }
 
@@ -457,7 +482,7 @@ public sealed class NatsAdapter : IAdapter, IDisposable
         _subscriptions[watchName] = cts;
         _objectTypes[watchName] = "KVWatch";
 
-        _ = KvWatchLoop(watchName, store, keyPattern, cts.Token);
+        FireAndForget(KvWatchLoop(watchName, store, keyPattern, cts.Token));
         return watchName;
     }
 
@@ -474,13 +499,13 @@ public sealed class NatsAdapter : IAdapter, IDisposable
                     ZValue.FromInt((long)entry.Revision),
                     ZValue.FromChars(opStr)
                 );
-                _poster.PostEvent(objectName, "KeyVal", data);
+                SafePost(objectName, "KeyVal", data);
             }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _poster.PostEvent(objectName, "Error", ZValue.FromChars(ex.Message));
+            SafePost(objectName, "Error", ZValue.FromChars(ex.Message));
         }
     }
 
@@ -547,7 +572,7 @@ public sealed class NatsAdapter : IAdapter, IDisposable
         _subscriptions[watchName] = cts;
         _objectTypes[watchName] = "ObjWatch";
 
-        _ = ObjWatchLoop(watchName, store, cts.Token);
+        FireAndForget(ObjWatchLoop(watchName, store, cts.Token));
         return watchName;
     }
 
@@ -562,13 +587,13 @@ public sealed class NatsAdapter : IAdapter, IDisposable
                     ZValue.FromInt((long)info.Size),
                     ZValue.FromChars(info.Deleted ? "Delete" : "Put")
                 );
-                _poster.PostEvent(objectName, "ObjChanged", data);
+                SafePost(objectName, "ObjChanged", data);
             }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _poster.PostEvent(objectName, "Error", ZValue.FromChars(ex.Message));
+            SafePost(objectName, "Error", ZValue.FromChars(ex.Message));
         }
     }
 
@@ -609,7 +634,7 @@ public sealed class NatsAdapter : IAdapter, IDisposable
                     msg.Data != null ? ZValue.FromBytes(msg.Data) : ZValue.EmptyNumeric,
                     headersValue
                 );
-                _poster.PostEvent(serviceFullName, "Request", data);
+                SafePost(serviceFullName, "Request", data);
 
                 // The APL side handles this by publishing to replyTo
                 // We don't auto-reply here — the handler just posts the event
@@ -765,15 +790,16 @@ public sealed class NatsAdapter : IAdapter, IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         foreach (var cts in _subscriptions.Values)
         {
-            cts.Cancel();
-            cts.Dispose();
+            try { cts.Cancel(); } catch { }
+            try { cts.Dispose(); } catch { }
         }
         _subscriptions.Clear();
         _subjectMap.Clear();
         _objectTypes.Clear();
-        _connection?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        try { _connection?.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
     }
 
     // ═══════════════════════════════════════════════════════════════

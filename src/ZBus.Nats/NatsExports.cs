@@ -13,6 +13,20 @@ public static unsafe class NatsExports
     internal static void Init()
     {
         Bus.RegisterAdapterFactory(() => new NatsAdapter());
+
+        // Prevent NativeAOT FailFast on unobserved task exceptions.
+        // These can occur when background tasks (subscribe loops, watchers) hit edge cases
+        // during shutdown races. We swallow them to avoid crashing the APL interpreter.
+        TaskScheduler.UnobservedTaskException += (_, e) => e.SetObserved();
+
+        // Last-resort handler — log but do NOT let the process terminate.
+        // In NativeAOT, unhandled exceptions in native callbacks = instant process death.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            // Nothing we can do here except prevent propagation in debug builds.
+            // The exception is already "unhandled" — this handler is informational only.
+            // The real fix is ensuring all paths have try/catch (SafePost, FireAndForget).
+        };
     }
 
     /// <summary>
