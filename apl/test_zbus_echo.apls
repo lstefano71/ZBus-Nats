@@ -1,10 +1,16 @@
 ⍝ ZBus Echo/Timer validation script
 ⍝ Run this in Dyalog APL 20.0+ (64-bit Unicode)
 ⍝ Validates the entire ZBus stack end-to-end:
-⍝   Init → Timer creation → Wait → Tick events → Echo → Close
+⍝   Init → Timer creation → Wait& (threaded) → Tick events → Echo → Close
+⍝   Proves that & allows APL green threads to run while Wait blocks on OS thread.
 
 ⎕IO ⎕ML←1
 pass←1
+counter←0
+
+⍝ Debug flag: workspace check after every line (catches corruption)
+old_dflags←2 ⎕NQ '#' 'setdflags' 64
+⎕←'dflags: 64'
 
 dll←'D:\devel\Z-Format\samples\ZBus.Echo\bin\Release\net10.0\win-x64\publish\ZBus.Echo.dll'
 
@@ -12,7 +18,8 @@ dll←'D:\devel\Z-Format\samples\ZBus.Echo\bin\Release\net10.0\win-x64\publish\Z
 
 ⍝ Kernel exports
 'zbus_init'    ⎕NA 'I4 ',dll,'|zbus_init <0T1 >Z'
-'zbus_wait'    ⎕NA 'I4 ',dll,'|zbus_wait <0T1 I4 >Z >Z >Z'
+'zbus_wait'    ⎕NA 'I4 ',dll,'|zbus_wait& <0T1 I4 >Z >Z >Z'
+'blocking_wait' ⎕NA 'I4 ',dll,'|zbus_wait <0T1 I4 >Z >Z >Z'
 'zbus_close'   ⎕NA 'I4 ',dll,'|zbus_close <0T1'
 'zbus_names'   ⎕NA 'I4 ',dll,'|zbus_names <0T1 >Z'
 'zbus_exists'  ⎕NA 'I4 ',dll,'|zbus_exists <0T1'
@@ -20,6 +27,18 @@ dll←'D:\devel\Z-Format\samples\ZBus.Echo\bin\Release\net10.0\win-x64\publish\Z
 ⍝ Echo adapter exports
 'zbus_echo_timer' ⎕NA 'I4 ',dll,'|zbus_echo_timer <0T1 <0T1 I4 >Z'
 'zbus_echo_send'  ⎕NA 'I4 ',dll,'|zbus_echo_send <0T1 =Z'
+
+⍝ ── Helper: background counter (proves APL threads run during Wait&) ─
+⍝ This tradfn loops incrementing a global variable.
+⍝ If & works, counter will advance while zbus_wait blocks.
+
+∇ BgCount secs;deadline
+  deadline←secs+3⊃⎕AI
+  :While deadline>3⊃⎕AI
+      counter←counter+1
+      ⎕DL 0.01
+  :EndWhile
+∇
 
 ⍝ ── Test 1: Init ─────────────────────────────────────────────────────
 
@@ -49,12 +68,37 @@ rc←zbus_exists ⊂'ZTest.T1'
 ⎕←'  rc=',(⍕rc),' children=',children
 :If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
 
-⍝ ── Test 5: Wait for tick event ──────────────────────────────────────
+⍝ ── Test 5: Threaded Wait& with concurrent APL work ──────────────────
+⍝ Launch a background APL thread that increments 'counter', then call
+⍝ zbus_wait& which blocks on an OS thread. If & works, the APL thread
+⍝ continues to run and counter advances during the wait.
 
-⎕←'Test 5: Wait for tick (timeout 3000ms)'
-(rc obj evt data)←zbus_wait 'ZTest' 3000 0 0 0
+⎕←'Test 5: Wait& with background APL thread'
+counter←0
+BgCount& 2000                          ⍝ spawn APL thread: count for 2 seconds
+(rc obj evt data)←zbus_wait 'ZTest' 1500 0 0 0   ⍝ blocks ~500ms (timer tick)
 ⎕←'  rc=',(⍕rc),' obj=',obj,' evt=',evt,' data=',⍕data
-:If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+⎕←'  counter=',(⍕counter),' (should be >0 if & worked)'
+:If rc≠0 ⋄ ⎕←'  FAIL (wait failed)' ⋄ pass←0 ⋄ :EndIf
+:If counter=0 ⋄ ⎕←'  FAIL (& did not allow concurrent APL)' ⋄ pass←0 ⋄ :EndIf
+
+⍝ Let background thread finish
+⎕DL 0.5
+
+⍝ ── Test 5b: blocking_wait (no &) — proves APL threads are frozen ────
+⍝ Same pattern: spawn counter thread, but use blocking_wait (no &).
+⍝ The entire interpreter is blocked, so counter should stay at 0.
+
+⎕←'Test 5b: blocking_wait (no &) — APL threads frozen'
+counter←0
+BgCount& 2000                          ⍝ spawn APL thread
+(rc obj evt data)←blocking_wait 'ZTest' 1500 0 0 0  ⍝ blocks interpreter entirely
+⎕←'  rc=',(⍕rc),' obj=',obj,' evt=',evt,' data=',⍕data
+⎕←'  counter=',(⍕counter),' (should be 0 — APL was frozen)'
+:If counter>0 ⋄ ⎕←'  FAIL (APL ran during blocking wait!)' ⋄ pass←0 ⋄ :EndIf
+
+⍝ Let background thread finish
+⎕DL 0.5
 
 ⍝ ── Test 6: Echo send ────────────────────────────────────────────────
 
