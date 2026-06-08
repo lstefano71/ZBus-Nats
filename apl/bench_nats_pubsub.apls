@@ -176,14 +176,14 @@ payload←fanSize⍴'F'
     :For s :In ⍳numSubs
         (rc sn)←nats_sub 'N1' ('fan',(⍕numSubs),'s',⍕s) 'bench.fanout'
         :If rc≠0 ⋄ fail 'FATAL: fan-out sub failed' ⋄ :EndIf
-        subNames←subNames,⊂sn
+        subNames,←⊂sn
     :EndFor
 
     ⍝ Warmup
     :For i :In ⍳10
         rc←nats_pub 'N1' 'bench.fanout' payload
-        :For s :In ⍳numSubs
-            (rc obj evt data)←zbus_wait (s⊃subNames) 2000 0 0 0
+        :For s :In subNames
+            (rc obj evt data)←zbus_wait s 2000 0 0 0
         :EndFor
     :EndFor
 
