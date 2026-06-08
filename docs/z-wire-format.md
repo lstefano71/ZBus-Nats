@@ -185,26 +185,38 @@ For integer values with exponent=0:
 
 ---
 
-## Proven Zones Values
+## Zones Quick-Reference
 
-Observed from the Dyalog 20.0 interpreter via probe DLL:
+Zones is a bitfield — rank occupies bits [7:4] (values 0–15) and is fully orthogonal to
+element type. To compute any zones value, OR the base with the rank shifted left by 4:
 
-| Zones | Meaning |
-|-------|---------|
-| `0x211F` | TYPESIMPLE \| rank1 \| APLBOOL \| squoze — boolean vector |
-| `0x220F` | TYPESIMPLE \| rank0 \| APLSINT \| squoze — byte scalar |
-| `0x221F` | TYPESIMPLE \| rank1 \| APLSINT \| squoze — byte vector |
-| `0x222F` | TYPESIMPLE \| rank2 \| APLSINT \| squoze — byte matrix |
-| `0x230F` | TYPESIMPLE \| rank0 \| APLINTG \| squoze — int16 scalar |
-| `0x231F` | TYPESIMPLE \| rank1 \| APLINTG \| squoze — int16 vector |
-| `0x240F` | TYPESIMPLE \| rank0 \| APLLONG \| squoze — int32 scalar |
-| `0x250F` | TYPESIMPLE \| rank0 \| APLDOUB \| squoze — double scalar |
-| `0x271F` | TYPESIMPLE \| rank1 \| APLWCHAR8 \| squoze — char vector (1-byte codepoints) |
-| `0x281F` | TYPESIMPLE \| rank1 \| APLWCHAR16 \| squoze — char vector (2-byte codepoints) |
-| `0x290F` | TYPESIMPLE \| rank0 \| APLWCHAR32 \| squoze — char scalar (4-byte codepoint) |
-| `0x2E0F` | TYPESIMPLE \| rank0 \| APLDECF_BID \| squoze — DECF scalar |
-| `0x2E1F` | TYPESIMPLE \| rank1 \| APLDECF_BID \| squoze — DECF vector |
-| `0x0617` | TYPEGEN \| rank1 \| APLPNTR — nested vector (no squoze) |
+```
+zones = base | (rank << 4)
+```
+
+### Simple array bases (TYPESIMPLE, squoze set)
+
+| Base | ElType | Description |
+|------|--------|-------------|
+| `0x210F` | APLBOOL | Bit-packed booleans (MSB-first) |
+| `0x220F` | APLSINT | Signed 8-bit integer |
+| `0x230F` | APLINTG | Signed 16-bit integer |
+| `0x240F` | APLLONG | Signed 32-bit integer |
+| `0x250F` | APLDOUB | IEEE 754 64-bit double |
+| `0x270F` | APLWCHAR8 | Unicode char, 1 byte (codepoints 0–255) |
+| `0x280F` | APLWCHAR16 | Unicode char, 2 bytes (codepoints 0–65535) |
+| `0x290F` | APLWCHAR32 | Unicode char, 4 bytes (full Unicode) |
+| `0x2E0F` | APLDECF_BID | Decimal float (BID128) |
+
+Example: APLLONG rank-3 → `0x240F | (3 << 4)` = `0x243F`.
+
+### Nested array base (TYPEGEN, no squoze)
+
+| Base | ElType | Description |
+|------|--------|-------------|
+| `0x0607` | APLPNTR | Nested (pointer slots) |
+
+Example: nested matrix (rank 2) → `0x0607 | (2 << 4)` = `0x0627`.
 
 ---
 
