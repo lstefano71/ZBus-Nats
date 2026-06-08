@@ -1,0 +1,163 @@
+⍝ ZBus.Nats End-to-End Throughput Benchmark
+⍝ Measures: pub/sub msg/s, request/reply latency
+⍝ Compare results against bench\CSharpBaseline to quantify ⎕NA/Z overhead
+⍝ Requires nats-server running on localhost:4222
+
+⎕IO ⎕ML←1
+
+⍝ Elapsed seconds from two 16 ⎕DT 'Z' timestamps (ns precision)
+⍝ ⎕FR←1287 is localised inside the dfn so it doesn't affect the rest of the script
+elapsed_s←{⎕FR←1287 ⋄ (⍵-⍺)÷1e9}
+
+dll←'D:\devel\Z-Format\src\ZBus.Nats\bin\Release\net10.0\win-x64\publish\ZBus.Nats.dll'
+
+⍝ ── Define ⎕NA bindings ──────────────────────────────────────────────
+
+'zbus_init'         ⎕NA 'I4 ',dll,'|zbus_init <0T1 >Z'
+'zbus_wait'         ⎕NA 'I4 ',dll,'|zbus_wait& <0T1 I4 >Z >Z >Z'
+'zbus_close'        ⎕NA 'I4 ',dll,'|zbus_close <0T1'
+'nats_connect'      ⎕NA 'I4 ',dll,'|zbus_nats_connect <0T1 <0T1'
+'nats_pub'          ⎕NA 'I4 ',dll,'|zbus_nats_pub <0T1 <0T1 <Z'
+'nats_sub'          ⎕NA 'I4 ',dll,'|zbus_nats_sub <0T1 <0T1 =Z'
+'nats_request'      ⎕NA 'I4 ',dll,'|zbus_nats_request <0T1 <0T1 <0T1 I4 =Z'
+
+⎕←'═══════════════════════════════════════════'
+⎕←' ZBus.Nats APL Benchmark (via ⎕NA)'
+⎕←'═══════════════════════════════════════════'
+⎕←''
+
+⍝ ── Setup: Publisher root ────────────────────────────────────────────
+
+(rc rn)←zbus_init 'PUB' 0
+rc←nats_connect 'PUB' 'nats://localhost:4222'
+(rc obj evt data)←zbus_wait 'PUB' 5000 0 0 0
+:If evt≢'Connected' ⋄ ⎕←'FATAL: PUB not connected' ⋄ ⎕OFF 1 ⋄ :EndIf
+
+⍝ ── Setup: Subscriber root ──────────────────────────────────────────
+
+(rc rn)←zbus_init 'SUB' 0
+rc←nats_connect 'SUB' 'nats://localhost:4222'
+(rc obj evt data)←zbus_wait 'SUB' 5000 0 0 0
+:If evt≢'Connected' ⋄ ⎕←'FATAL: SUB not connected' ⋄ ⎕OFF 1 ⋄ :EndIf
+
+⎕←'Both roots connected'
+⎕←''
+
+⍝ ── Pub/Sub Throughput ───────────────────────────────────────────────
+
+⎕←'Pub/Sub Throughput (publish-side, no wait for delivery):'
+⎕←'  Size      Count     msg/s      MB/s    elapsed'
+⎕←'  ────      ─────     ─────      ────    ───────'
+
+:For payloadSize :In 64 256 1024 4096
+    payload←⎕UCS payloadSize⍴65  ⍝ 'AAA...' of given size (UTF-8 bytes)
+    msgCount←10000
+
+    ⍝ Timed publish loop (fire-and-forget, measures ⎕NA call overhead)
+    t0←16 ⎕DT 'Z'
+    :For i :In ⍳msgCount
+        rc←nats_pub 'PUB' 'bench.tput' payload
+    :EndFor
+    t1←16 ⎕DT 'Z'
+    elapsed←t0 elapsed_s t1
+
+    msgsPerSec←⌊msgCount÷elapsed⌈0.001
+    mbPerSec←(msgCount×payloadSize)÷(1024×1024×elapsed⌈0.001)
+
+    ⎕←'  ',(5↑⍕payloadSize),'B   ',(7↑⍕msgCount),'   ',(8↑⍕msgsPerSec),'   ',(6↑2⍕mbPerSec),'   ',(5↑3⍕elapsed),'s'
+:EndFor
+
+⎕←''
+
+⍝ ── Pub/Sub Round-trip (publish + wait for msg) ─────────────────────
+
+⎕←'Pub/Sub Round-trip (pub + wait for each msg):'
+⎕←'  Size      Count     msg/s    avg µs    elapsed'
+⎕←'  ────      ─────     ─────    ──────    ───────'
+
+:For payloadSize :In 64 256 1024
+    payload←⎕UCS payloadSize⍴66
+    msgCount←1000
+
+    ⍝ Subscribe
+    (rc subName)←nats_sub 'SUB' 'rtsub' 'bench.rt'
+
+    ⍝ Warmup
+    :For i :In ⍳100
+        rc←nats_pub 'PUB' 'bench.rt' payload
+        (rc obj evt data)←zbus_wait 'SUB' 2000 0 0 0
+    :EndFor
+
+    ⍝ Timed round-trip
+    t0←16 ⎕DT 'Z'
+    :For i :In ⍳msgCount
+        rc←nats_pub 'PUB' 'bench.rt' payload
+        (rc obj evt data)←zbus_wait 'SUB' 5000 0 0 0
+    :EndFor
+    t1←16 ⎕DT 'Z'
+    elapsed←t0 elapsed_s t1
+
+    msgsPerSec←⌊msgCount÷elapsed⌈0.001
+    avgUs←⌊1000000×elapsed÷msgCount
+
+    ⎕←'  ',(5↑⍕payloadSize),'B   ',(7↑⍕msgCount),'   ',(8↑⍕msgsPerSec),'   ',(7↑⍕avgUs),'   ',(5↑3⍕elapsed),'s'
+
+    ⍝ Close sub for next iteration
+    rc←zbus_close ⊂subName
+    (rc obj evt data)←zbus_wait 'SUB' 1000 0 0 0  ⍝ drain Closed event
+:EndFor
+
+⎕←''
+
+⍝ ── Request/Reply Latency ───────────────────────────────────────────
+
+⎕←'Request/Reply Latency:'
+
+⍝ Set up a responder on SUB
+(rc subName)←nats_sub 'SUB' 'echoer' 'bench.reqrep'
+
+payload←⎕UCS 64⍴67
+reqCount←500
+
+⍝ Warmup
+:For i :In ⍳50
+    (rc reqName)←nats_request 'PUB' '' 'bench.reqrep' 5000 payload
+    ⍝ Responder: receive request, reply
+    (rc obj evt data)←zbus_wait 'SUB' 3000 0 0 0
+    :If evt≡'Msg'
+        replyTo←2⊃data
+        rc←nats_pub 'SUB' replyTo 'ok'
+    :EndIf
+    ⍝ Requester: receive reply
+    (rc obj evt data)←zbus_wait 'PUB' 3000 0 0 0
+:EndFor
+
+⍝ Timed request/reply
+t0←16 ⎕DT 'Z'
+:For i :In ⍳reqCount
+    (rc reqName)←nats_request 'PUB' '' 'bench.reqrep' 5000 payload
+    (rc obj evt data)←zbus_wait 'SUB' 5000 0 0 0
+    :If evt≡'Msg'
+        replyTo←2⊃data
+        rc←nats_pub 'SUB' replyTo 'ok'
+    :EndIf
+    (rc obj evt data)←zbus_wait 'PUB' 5000 0 0 0
+:EndFor
+t1←16 ⎕DT 'Z'
+elapsed←t0 elapsed_s t1
+
+reqsPerSec←⌊reqCount÷elapsed⌈0.001
+avgUs←⌊1000000×elapsed÷reqCount
+
+⎕←'  ',(⍕reqCount),' requests: ',(⍕reqsPerSec),' req/s, avg ',(⍕avgUs),'µs (',(3⍕elapsed),'s)'
+⎕←''
+
+⍝ ── Cleanup ──────────────────────────────────────────────────────────
+
+rc←zbus_close ⊂'PUB'
+rc←zbus_close ⊂'SUB'
+
+⎕←'═══════════════════════════════════════════'
+⎕←' Benchmark complete'
+⎕←' Compare with: dotnet run --project bench\CSharpBaseline -c Release'
+⎕←'═══════════════════════════════════════════'
