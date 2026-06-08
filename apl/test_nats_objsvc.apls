@@ -20,9 +20,11 @@ dll←'D:\devel\Z-Format\src\ZBus.Nats\bin\Release\net10.0\win-x64\publish\ZBus.
 'nats_obj_get'      ⎕NA 'I4 ',dll,'|zbus_nats_obj_get <0T1 <0T1 >Z'
 'nats_obj_put'      ⎕NA 'I4 ',dll,'|zbus_nats_obj_put <0T1 <0T1 <Z'
 'nats_obj_del'      ⎕NA 'I4 ',dll,'|zbus_nats_obj_del <0T1 <0T1'
+'nats_obj_watch'    ⎕NA 'I4 ',dll,'|zbus_nats_obj_watch <0T1 >Z'
 'nats_service'      ⎕NA 'I4 ',dll,'|zbus_nats_service <0T1 <0T1 =Z'
 'nats_endpoint'     ⎕NA 'I4 ',dll,'|zbus_nats_endpoint <0T1 <0T1 <0T1'
 'nats_request'      ⎕NA 'I4 ',dll,'|zbus_nats_request <0T1 <0T1 <0T1 I4 =Z'
+'nats_svc_discover' ⎕NA 'I4 ',dll,'|zbus_nats_svc_discover <0T1 <0T1 I4 >Z'
 
 ⎕←'══════════════════════════════════════════'
 ⎕←' ZBus.Nats Object Store + Services Tests'
@@ -149,6 +151,54 @@ tests+←1
     passed+←1 ⋄ ⎕←'  ✓ type=Service'
 :Else
     pass←0 ⋄ ⎕←'  ✗ describe: rc=',(⍕rc)
+:EndIf
+
+⍝ ── Object Store Watch ────────────────────────────────────────────────
+
+⎕←''
+⎕←'Test 11: Object store watch'
+⍝ Create a fresh store for watch test
+(rc watchStoreName)←nats_obj 'OS' 'watchtest'
+(rc watchName)←nats_obj_watch watchStoreName 0
+tests+←1
+:If rc=0
+    passed+←1 ⋄ ⎕←'  ✓ obj_watch created: ',watchName
+:Else
+    pass←0 ⋄ ⎕←'  ✗ obj_watch failed rc=',(⍕rc)
+:EndIf
+
+⎕←'Test 12: ObjChanged event on put'
+rc←nats_obj_put watchStoreName 'hello.txt' 'hello world'
+⎕DL 0.3
+(rc obj evt data)←zbus_wait 'OS' 3000 0 0 0
+tests+←1
+:If evt≡'ObjChanged'
+    passed+←1 ⋄ ⎕←'  ✓ got ObjChanged, name=',(1⊃data),', op=',(3⊃data)
+:Else
+    pass←0 ⋄ ⎕←'  ✗ expected ObjChanged, got ',evt,' on ',obj
+:EndIf
+
+⎕←'Test 13: ObjChanged event on delete'
+rc←nats_obj_del watchStoreName 'hello.txt'
+⎕DL 0.3
+(rc obj evt data)←zbus_wait 'OS' 3000 0 0 0
+tests+←1
+:If evt≡'ObjChanged'
+    passed+←1 ⋄ ⎕←'  ✓ got ObjChanged delete, op=',(3⊃data)
+:Else
+    pass←0 ⋄ ⎕←'  ✗ expected ObjChanged delete, got ',evt
+:EndIf
+
+⍝ ── Service Discovery ─────────────────────────────────────────────────
+
+⎕←''
+⎕←'Test 14: Service discovery (find our echo service)'
+(rc services)←nats_svc_discover 'OS' 'echo' 500 0
+tests+←1
+:If rc=0
+    passed+←1 ⋄ ⎕←'  ✓ discover returned services'
+:Else
+    pass←0 ⋄ ⎕←'  ✗ discover failed rc=',(⍕rc)
 :EndIf
 
 ⍝ ── Cleanup ──────────────────────────────────────────────────────────

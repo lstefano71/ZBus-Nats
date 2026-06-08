@@ -87,7 +87,9 @@ This follows the DRC.Describe pattern: root returns library metadata, children r
 | `zbus_nats_obj_get` | `I4 dll\|zbus_nats_obj_get <0T1 <0T1 >Z` | `(rc data)←nats_obj_get 'N1.files' 'report.pdf' 0` |
 | `zbus_nats_obj_put` | `I4 dll\|zbus_nats_obj_put <0T1 <0T1 <Z` | `rc←nats_obj_put 'N1.files' 'report.pdf' payload` |
 | `zbus_nats_obj_del` | `I4 dll\|zbus_nats_obj_del <0T1 <0T1` | `rc←nats_obj_del 'N1.files' 'report.pdf'` |
-| `zbus_nats_obj_watch` | `I4 dll\|zbus_nats_obj_watch <0T1` | `rc←nats_obj_watch 'N1.files'` |
+| `zbus_nats_obj_watch` | `I4 dll\|zbus_nats_obj_watch <0T1 >Z` | `(rc watchName)←nats_obj_watch 'N1.files' 0` |
+
+**ObjChanged event data:** `(name size operation)` — name is the object key, size in bytes, operation is `'Put'` or `'Delete'`.
 
 ### Services
 
@@ -95,7 +97,9 @@ This follows the DRC.Describe pattern: root returns library metadata, children r
 |--------|--------------|----------|
 | `zbus_nats_service` | `I4 dll\|zbus_nats_service <0T1 <0T1 =Z` | `(rc name)←nats_service 'N1' 'calc' ('Math svc' '1.0')` |
 | `zbus_nats_endpoint` | `I4 dll\|zbus_nats_endpoint <0T1 <0T1 <0T1` | `rc←nats_endpoint 'N1.calc' 'add' 'math.add'` |
-| `zbus_nats_svc_discover` | `I4 dll\|zbus_nats_svc_discover <0T1 =Z` | `(rc name)←nats_svc_discover 'N1' ('D1' '' 2000)` |
+| `zbus_nats_svc_discover` | `I4 dll\|zbus_nats_svc_discover <0T1 <0T1 I4 >Z` | `(rc svcs)←nats_svc_discover 'N1' 'echo' 500 0` |
+
+**Discover output:** nested array of `(name id version)` per responding service. Empty service name discovers all.
 
 ---
 

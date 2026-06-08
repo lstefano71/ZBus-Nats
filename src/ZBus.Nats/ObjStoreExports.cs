@@ -142,6 +142,39 @@ public static unsafe class ObjStoreExports
         }
     }
 
+    /// <summary>
+    /// Watch an object store for changes.
+    /// ⎕NA: 'I4 ZBus.Nats|zbus_nats_obj_watch &lt;0T1 >Z'
+    /// APL: (rc watchName) ← nats_obj_watch 'N1.files' 0
+    /// Posts ObjChanged events with (name size operation) data.
+    /// </summary>
+    [UnmanagedCallersOnly(EntryPoint = "zbus_nats_obj_watch")]
+    public static int ZBusNatsObjWatch(nint storeNamePtr, nint* outZ)
+    {
+        try
+        {
+            var storeFullName = Marshal.PtrToStringAnsi(storeNamePtr) ?? "";
+            var rootName = Bus.ExtractRootSegment(storeFullName);
+
+            return Dispatch.Execute<NatsAdapter>(rootName, (adapter, root) =>
+            {
+                var watchName = adapter.ObjWatch(storeFullName);
+                if (string.IsNullOrEmpty(watchName))
+                {
+                    ZWriter.WriteToNative((nint)outZ, ZValue.EmptyChar);
+                    return ReturnCodes.NotFound;
+                }
+                ZWriter.WriteToNative((nint)outZ, ZValue.FromChars(watchName));
+                return ReturnCodes.OK;
+            });
+        }
+        catch
+        {
+            ZWriter.WriteToNative((nint)outZ, ZValue.EmptyChar);
+            return ReturnCodes.InternalError;
+        }
+    }
+
     private static byte[] ExtractPayloadBytes(ZValue value)
     {
         if (value.Type == ZType.Char)

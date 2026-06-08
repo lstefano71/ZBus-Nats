@@ -537,6 +537,41 @@ public sealed class NatsAdapter : IAdapter, IDisposable
         return ReturnCodes.OK;
     }
 
+    public string ObjWatch(string storeFullName)
+    {
+        if (!_objStores.TryGetValue(storeFullName, out var store))
+            return "";
+
+        var watchName = $"{storeFullName}.watch";
+        var cts = new CancellationTokenSource();
+        _subscriptions[watchName] = cts;
+        _objectTypes[watchName] = "ObjWatch";
+
+        _ = ObjWatchLoop(watchName, store, cts.Token);
+        return watchName;
+    }
+
+    private async Task ObjWatchLoop(string objectName, INatsObjStore store, CancellationToken ct)
+    {
+        try
+        {
+            await foreach (var info in store.WatchAsync(cancellationToken: ct))
+            {
+                var data = ZValue.Nested(
+                    ZValue.FromChars(info.Name),
+                    ZValue.FromInt((long)info.Size),
+                    ZValue.FromChars(info.Deleted ? "Delete" : "Put")
+                );
+                _poster.PostEvent(objectName, "ObjChanged", data);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _poster.PostEvent(objectName, "Error", ZValue.FromChars(ex.Message));
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Services
     // ═══════════════════════════════════════════════════════════════
@@ -583,6 +618,57 @@ public sealed class NatsAdapter : IAdapter, IDisposable
             subject: subject);
 
         return ReturnCodes.OK;
+    }
+
+    /// <summary>
+    /// Discover services by pinging the NATS micro service protocol.
+    /// Returns a nested Z array of (name, id, version) per responding service.
+    /// </summary>
+    public async Task<ZValue> DiscoverServicesAsync(string? serviceNameFilter, int timeoutMs)
+    {
+        if (_connection == null)
+            return ZValue.EmptyNumeric;
+
+        // NATS micro protocol: request on $SRV.PING or $SRV.PING.<name>
+        var subject = string.IsNullOrEmpty(serviceNameFilter)
+            ? "$SRV.PING"
+            : $"$SRV.PING.{serviceNameFilter}";
+
+        var results = new List<ZValue>();
+        var cts = new CancellationTokenSource(timeoutMs);
+
+        try
+        {
+            await foreach (var msg in _connection.RequestManyAsync<byte[], byte[]>(
+                subject, null, cancellationToken: cts.Token))
+            {
+                // Parse the JSON response to extract service info
+                if (msg.Data != null)
+                {
+                    try
+                    {
+                        var json = System.Text.Encoding.UTF8.GetString(msg.Data);
+                        var doc = System.Text.Json.JsonDocument.Parse(json);
+                        var root = doc.RootElement;
+                        var name = root.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                        var id = root.TryGetProperty("id", out var i) ? i.GetString() ?? "" : "";
+                        var version = root.TryGetProperty("version", out var v) ? v.GetString() ?? "" : "";
+                        results.Add(ZValue.Nested(
+                            ZValue.FromChars(name),
+                            ZValue.FromChars(id),
+                            ZValue.FromChars(version)
+                        ));
+                    }
+                    catch { /* skip malformed responses */ }
+                }
+            }
+        }
+        catch (OperationCanceledException) { /* timeout — return what we have */ }
+
+        if (results.Count == 0)
+            return ZValue.EmptyNumeric;
+
+        return ZValue.Nested(results.ToArray());
     }
 
     // ═══════════════════════════════════════════════════════════════
