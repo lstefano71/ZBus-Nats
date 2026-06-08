@@ -18,7 +18,7 @@ internal sealed class Waitpoint : IDisposable
     /// <summary>Maximum queue depth before discard-oldest kicks in.</summary>
     public int MaxQueueDepth { get; }
 
-    public Waitpoint(int maxQueueDepth = 1024)
+    public Waitpoint(int maxQueueDepth = 16384)
     {
         MaxQueueDepth = maxQueueDepth;
         var opts = new BoundedChannelOptions(maxQueueDepth)

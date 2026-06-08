@@ -110,6 +110,104 @@ rtCounts←5000 5000 2500 1000
     (rc obj evt data)←zbus_wait 'N1' 500 0 0 0
 :EndFor
 
+⍝ ── Section 3: Publish throughput WITH subscriber (blast + drain) ──────
+⍝ Subscriber is active. Blast all messages, then drain all.
+⍝ Buffer is 16K — counts must fit. Measures real delivery throughput.
+
+⎕←''
+⎕←'Publish throughput with 1 active subscriber (blast + drain)'
+⎕←'size_bytes  count  pub_msg/s  drain_msg/s  total_elapsed_s'
+deliveryCounts←10000 10000 5000 2000
+:For idx :In ⍳≢sizes
+    payloadSize←idx⊃sizes
+    msgCount←idx⊃deliveryCounts
+    payload←payloadSize⍴'C'
+
+    (rc subName)←nats_sub 'N1' ('ds',⍕idx) 'bench.delivery'
+    :If rc≠0 ⋄ fail 'FATAL: delivery sub failed rc=',⍕rc ⋄ :EndIf
+
+    ⍝ Warmup — confirm delivery works
+    :For i :In ⍳10
+        rc←nats_pub 'N1' 'bench.delivery' payload
+        (rc obj evt data)←zbus_wait subName 2000 0 0 0
+        :If evt≢'Msg' ⋄ fail 'DELIVERY WARMUP FAIL' ⋄ :EndIf
+    :EndFor
+
+    ⍝ Timed: blast all messages
+    t0←16 ⎕DT 'Z'
+    :For i :In ⍳msgCount
+        rc←nats_pub 'N1' 'bench.delivery' payload
+        :If rc≠0 ⋄ fail 'BLAST FAIL: nats_pub rc=',⍕rc ⋄ :EndIf
+    :EndFor
+    t1←16 ⎕DT 'Z'
+    pubElapsed←t0 elapsed_s t1
+
+    ⍝ Drain all messages from subscriber
+    t2←16 ⎕DT 'Z'
+    drained←0
+    :While drained<msgCount
+        (rc obj evt data)←zbus_wait subName 5000 0 0 0
+        :If evt≢'Msg' ⋄ :Leave ⋄ :EndIf
+        drained←drained+1
+    :EndWhile
+    t3←16 ⎕DT 'Z'
+    drainElapsed←t2 elapsed_s t3
+
+    :If drained≠msgCount ⋄ fail 'DRAIN FAIL: expected ',(⍕msgCount),' got ',⍕drained ⋄ :EndIf
+
+    ⎕←(⍕payloadSize),'  ',(⍕msgCount),'  ',(⍕⌊msgCount÷(pubElapsed⌈1e¯9)),'  ',(⍕⌊drained÷(drainElapsed⌈1e¯9)),'  ',(⍕(t0 elapsed_s t3))
+    rc←zbus_close ⊂subName
+    (rc obj evt data)←zbus_wait 'N1' 500 0 0 0
+:EndFor
+
+⍝ ── Section 4: Fan-out — publish to N subscribers ─────────────────────
+⍝ 1 publish → N subscribers each receive the message. Measures fan-out cost.
+
+⎕←''
+⎕←'Fan-out: 1 pub → N subs (round-trip per message)'
+⎕←'num_subs  size_bytes  count  msg/s  elapsed_s'
+fanSubs←1 2 4
+fanSize←256
+fanCount←2000
+payload←fanSize⍴'F'
+
+:For numSubs :In fanSubs
+    subNames←⍬
+    :For s :In ⍳numSubs
+        (rc sn)←nats_sub 'N1' ('fan',(⍕numSubs),'s',⍕s) 'bench.fanout'
+        :If rc≠0 ⋄ fail 'FATAL: fan-out sub failed' ⋄ :EndIf
+        subNames←subNames,⊂sn
+    :EndFor
+
+    ⍝ Warmup
+    :For i :In ⍳10
+        rc←nats_pub 'N1' 'bench.fanout' payload
+        :For s :In ⍳numSubs
+            (rc obj evt data)←zbus_wait (s⊃subNames) 2000 0 0 0
+        :EndFor
+    :EndFor
+
+    ⍝ Timed: pub + drain all subs per message
+    t0←16 ⎕DT 'Z'
+    :For i :In ⍳fanCount
+        rc←nats_pub 'N1' 'bench.fanout' payload
+        :If rc≠0 ⋄ fail 'FAN FAIL: pub rc=',⍕rc ⋄ :EndIf
+        :For s :In ⍳numSubs
+            (rc obj evt data)←zbus_wait (s⊃subNames) 5000 0 0 0
+            :If evt≢'Msg' ⋄ fail 'FAN FAIL: expected Msg got ',evt ⋄ :EndIf
+        :EndFor
+    :EndFor
+    t1←16 ⎕DT 'Z'
+    elapsed←t0 elapsed_s t1
+
+    ⎕←(⍕numSubs),'  ',(⍕fanSize),'  ',(⍕fanCount),'  ',(⍕⌊fanCount÷(elapsed⌈1e¯9)),'  ',(⍕elapsed)
+
+    :For s :In ⍳numSubs
+        rc←zbus_close ⊂(s⊃subNames)
+        (rc obj evt data)←zbus_wait 'N1' 500 0 0 0
+    :EndFor
+:EndFor
+
 ⎕←''
 rc←zbus_close ⊂'N1'
 ⎕←'Benchmark complete'
