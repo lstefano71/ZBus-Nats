@@ -1,0 +1,102 @@
+⍝ ZBus Echo/Timer validation script
+⍝ Run this in Dyalog APL 20.0+ (64-bit Unicode)
+⍝ Validates the entire ZBus stack end-to-end:
+⍝   Init → Timer creation → Wait → Tick events → Echo → Close
+
+⎕IO ⎕ML←1
+pass←1
+
+dll←'D:\devel\Z-Format\samples\ZBus.Echo\bin\Release\net10.0\win-x64\publish\ZBus.Echo.dll'
+
+⍝ ── Define ⎕NA bindings ──────────────────────────────────────────────
+
+⍝ Kernel exports
+'zbus_init'    ⎕NA 'I4 ',dll,'|zbus_init <0T1 >Z'
+'zbus_wait'    ⎕NA 'I4 ',dll,'|zbus_wait <0T1 I4 >Z >Z >Z'
+'zbus_close'   ⎕NA 'I4 ',dll,'|zbus_close <0T1'
+'zbus_names'   ⎕NA 'I4 ',dll,'|zbus_names <0T1 >Z'
+'zbus_exists'  ⎕NA 'I4 ',dll,'|zbus_exists <0T1'
+
+⍝ Echo adapter exports
+'zbus_echo_timer' ⎕NA 'I4 ',dll,'|zbus_echo_timer <0T1 <0T1 I4 >Z'
+'zbus_echo_send'  ⎕NA 'I4 ',dll,'|zbus_echo_send <0T1 =Z'
+
+⍝ ── Test 1: Init ─────────────────────────────────────────────────────
+
+⎕←'Test 1: Init'
+(rc rootName)←zbus_init 'ZTest' 0
+⎕←'  rc=',(⍕rc),' rootName=',rootName
+:If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+
+⍝ ── Test 2: Create timer (500ms interval) ────────────────────────────
+
+⎕←'Test 2: Create timer'
+(rc timerName)←zbus_echo_timer 'ZTest' 'T1' 500 0
+⎕←'  rc=',(⍕rc),' timerName=',timerName
+:If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+
+⍝ ── Test 3: Check exists ─────────────────────────────────────────────
+
+⎕←'Test 3: Exists'
+rc←zbus_exists ⊂'ZTest.T1'
+⎕←'  rc=',(⍕rc),' (0=exists)'
+:If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+
+⍝ ── Test 4: List names ───────────────────────────────────────────────
+
+⎕←'Test 4: Names'
+(rc children)←zbus_names 'ZTest' 0
+⎕←'  rc=',(⍕rc),' children=',children
+:If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+
+⍝ ── Test 5: Wait for tick event ──────────────────────────────────────
+
+⎕←'Test 5: Wait for tick (timeout 3000ms)'
+(rc obj evt data)←zbus_wait 'ZTest' 3000 0 0 0
+⎕←'  rc=',(⍕rc),' obj=',obj,' evt=',evt,' data=',⍕data
+:If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+
+⍝ ── Test 6: Echo send ────────────────────────────────────────────────
+
+⎕←'Test 6: Echo send'
+(rc _)←zbus_echo_send 'ZTest.T1' (⊂'hello from APL')
+⎕←'  send rc=',⍕rc
+:If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+
+⍝ Wait for the echo back
+(rc obj evt data)←zbus_wait 'ZTest' 3000 0 0 0
+⎕←'  echo: rc=',(⍕rc),' evt=',evt,' data=',data
+:If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+
+⍝ ── Test 7: Close timer ──────────────────────────────────────────────
+
+⎕←'Test 7: Close timer'
+rc←zbus_close ⊂'ZTest.T1'
+⎕←'  close rc=',⍕rc
+:If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+
+⍝ Verify it's gone
+rc←zbus_exists ⊂'ZTest.T1'
+⎕←'  exists after close: rc=',(⍕rc),' (3=NotFound)'
+:If rc≠3 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+
+⍝ ── Test 8: Wait timeout ─────────────────────────────────────────────
+
+⎕←'Test 8: Timeout (500ms)'
+(rc obj evt data)←zbus_wait 'ZTest' 500 0 0 0
+⎕←'  rc=',(⍕rc),' evt=',evt
+:If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+
+⍝ ── Test 9: Close root ───────────────────────────────────────────────
+
+⎕←'Test 9: Close root'
+rc←zbus_close ⊂'ZTest'
+⎕←'  close root rc=',⍕rc
+:If rc≠0 ⋄ ⎕←'  FAIL' ⋄ pass←0 ⋄ :EndIf
+
+⎕←''
+:If pass
+    ⎕←'═══ ALL 9 TESTS PASSED ═══'
+:Else
+    ⎕←'*** SOME TESTS FAILED ***'
+:EndIf

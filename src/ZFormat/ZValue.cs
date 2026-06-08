@@ -636,4 +636,23 @@ public sealed class ZValue
         }
         return bytes;
     }
+
+    // ─── Convenience factories for ZBus ───
+
+    /// <summary>Empty numeric vector (⍬ / zilde).</summary>
+    public static ZValue EmptyNumeric =>
+        new(ZType.Int, Zones.Simple(1, ElType.APLLONG), [0], bytes: []);
+
+    /// <summary>Empty character vector ('').</summary>
+    public static ZValue EmptyChar =>
+        new(ZType.Char, Zones.Simple(1, ElType.APLWCHAR16), [0], bytes: []);
+
+    /// <summary>Create a nested vector of strings from a list of strings.</summary>
+    public static ZValue FromStringArray(IReadOnlyList<string> strings)
+    {
+        var items = new ZValue[strings.Count];
+        for (int i = 0; i < strings.Count; i++)
+            items[i] = FromChars(strings[i]);
+        return Nested(items);
+    }
 }

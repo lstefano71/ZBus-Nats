@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/ZBus.Echo/ZBus.Echo.csproj" />
+  </Folder>
+  <Folder Name="/samples/ZProbeManaged/">
+    <Project Path="samples/ZProbeManaged/ZProbeManaged/ZProbeManaged.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/ZBus/ZBus.csproj" />
+    <Project Path="src/ZFormat/ZFormat.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ZFormat.Tests/ZFormat.Tests.csproj" />
+  </Folder>
+</Solution>
