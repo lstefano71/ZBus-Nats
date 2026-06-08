@@ -25,6 +25,28 @@ Present in every ZBus AOT DLL.
 | `zbus_setprop` | `I4 dll\|zbus_setprop <0T1 <0T1 <Z` | `rc←setprop 'N1' 'TlsMode' 'require'` |
 | `zbus_describe` | `I4 dll\|zbus_describe <0T1 >Z` | `(rc desc)←describe 'N1.prices' 0` |
 
+### Describe Convention (Conga-aligned)
+
+`zbus_describe` returns a nested vector whose shape depends on whether you describe the **root** or a **child** object:
+
+**Root describe** (`describe 'N1' 0`):
+```
+[1]  Library identifier — '[ZBus.Nats]'
+[2]  Version string    — 'NATS.Net 2.x / ZBus 1.0'
+[3]  State             — 'Connected' | 'Disconnected' | 'Reconnecting'
+[4]  URL               — 'nats://localhost:4222'
+```
+
+**Child describe** (`describe 'N1.prices' 0`):
+```
+[1]  Full name   — 'N1.prices'
+[2]  Object type — 'Subscription' | 'Consumer' | 'Stream' | ...
+[3]  State       — 'Started' | 'Stopped'
+[4+] Type-specific extras (e.g., subject for subscriptions)
+```
+
+This follows the DRC.Describe pattern: root returns library metadata, children return `(name type state ...)`.
+
 ---
 
 ## NATS Adapter Exports

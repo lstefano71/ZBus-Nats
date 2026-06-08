@@ -39,4 +39,10 @@ public interface IAdapter
     /// Returns true if the property was accepted, false if not recognized.
     /// </summary>
     bool SetProperty(string objectName, string propertyName, ZValue value);
+
+    /// <summary>
+    /// Describe an adapter-owned object. Returns a nested vector with
+    /// type, state, and adapter-specific metadata. Null if not recognized.
+    /// </summary>
+    ZValue? Describe(string objectName) => null;
 }

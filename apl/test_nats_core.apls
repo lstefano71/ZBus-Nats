@@ -1,0 +1,223 @@
+⍝ ZBus.Nats Core NATS test suite
+⍝ Validates: headers, describe, queue groups, multiple subs, close cascade
+⍝ Requires nats-server running on localhost:4222
+
+⎕IO ⎕ML←1
+pass←1
+tests←0 ⋄ passed←0
+
+dll←'D:\devel\Z-Format\src\ZBus.Nats\bin\Release\net10.0\win-x64\publish\ZBus.Nats.dll'
+
+⍝ ── Define ⎕NA bindings ──────────────────────────────────────────────
+
+'zbus_init'         ⎕NA 'I4 ',dll,'|zbus_init <0T1 >Z'
+'zbus_wait'         ⎕NA 'I4 ',dll,'|zbus_wait& <0T1 I4 >Z >Z >Z'
+'zbus_close'        ⎕NA 'I4 ',dll,'|zbus_close <0T1'
+'zbus_exists'       ⎕NA 'I4 ',dll,'|zbus_exists <0T1'
+'zbus_names'        ⎕NA 'I4 ',dll,'|zbus_names <0T1 >Z'
+'zbus_describe'     ⎕NA 'I4 ',dll,'|zbus_describe <0T1 >Z'
+'zbus_getprop'      ⎕NA 'I4 ',dll,'|zbus_getprop <0T1 <0T1 >Z'
+'nats_connect'      ⎕NA 'I4 ',dll,'|zbus_nats_connect <0T1 <0T1'
+'nats_pub'          ⎕NA 'I4 ',dll,'|zbus_nats_pub <0T1 <0T1 <Z'
+'nats_sub'          ⎕NA 'I4 ',dll,'|zbus_nats_sub <0T1 <0T1 =Z'
+
+⍝ ── Helpers ──────────────────────────────────────────────────────────
+
+check←{
+    tests+←1
+    rc evt expected←⍵
+    :If evt≡expected
+        passed+←1
+        ⎕←'  ✓ ',⍺
+    :Else
+        pass←0
+        ⎕←'  ✗ ',⍺,' (expected "',expected,'", got "',evt,'")'
+    :EndIf
+}
+
+⍝ ── Setup ────────────────────────────────────────────────────────────
+
+⎕←'══════════════════════════════════════════'
+⎕←' ZBus.Nats Core Test Suite'
+⎕←'══════════════════════════════════════════'
+⎕←''
+
+(rc rootName)←zbus_init 'C1' 0
+:If rc≠0 ⋄ ⎕←'FATAL: init failed' ⋄ ⎕OFF 1 ⋄ :EndIf
+rc←nats_connect 'C1' 'nats://localhost:4222'
+:If rc≠0 ⋄ ⎕←'FATAL: connect failed' ⋄ ⎕OFF 1 ⋄ :EndIf
+(rc obj evt data)←zbus_wait 'C1' 5000 0 0 0
+:If evt≢'Connected' ⋄ ⎕←'FATAL: not connected (',evt,')' ⋄ ⎕OFF 1 ⋄ :EndIf
+
+⎕←'Connected to NATS'
+⎕←''
+
+⍝ ── Test: Describe root ──────────────────────────────────────────────
+
+⎕←'Test: Describe root'
+tests+←1
+(rc info)←zbus_describe 'C1' 0
+:If rc=0
+    ⎕←'  [1]=',1⊃info
+    ⎕←'  [2]=',2⊃info
+    ⎕←'  [3]=',3⊃info
+    ⎕←'  [4]=',4⊃info
+    :If (1⊃info)≡'[ZBus.Nats]'
+        passed+←1 ⋄ ⎕←'  ✓ root describe returns adapter metadata'
+    :Else
+        pass←0 ⋄ ⎕←'  ✗ unexpected [1]: ',1⊃info
+    :EndIf
+:Else
+    pass←0 ⋄ ⎕←'  ✗ describe failed rc=',⍕rc
+:EndIf
+
+⍝ ── Test: Publish with headers ──────────────────────────────────────
+
+⎕←''
+⎕←'Test: Publish with headers'
+(rc subName)←nats_sub 'C1' 'hdrsub' 'test.hdrs'
+:If rc≠0 ⋄ pass←0 ⋄ ⎕←'  ✗ subscribe failed' ⋄ :EndIf
+
+⍝ Build headers: 2×2 matrix (key, value per row)
+hdrs←2 2⍴'X-Source' 'APL' 'X-Version' '1.0'
+payload←'payload with headers'
+
+⍝ Publish with (payload, headers) nested pair
+rc←nats_pub 'C1' 'test.hdrs' (payload hdrs)
+tests+←1
+:If rc=0
+    passed+←1 ⋄ ⎕←'  ✓ publish with headers rc=0'
+:Else
+    pass←0 ⋄ ⎕←'  ✗ publish failed rc=',⍕rc
+:EndIf
+
+⍝ Receive and check headers in event data
+(rc obj evt data)←zbus_wait 'C1' 5000 0 0 0
+tests+←1
+:If evt≡'Msg'
+    ⍝ data is (subject, replyTo, payload, headers)
+    msgSubj←1⊃data
+    msgPayload←3⊃data
+    msgHdrs←4⊃data
+    ⎕←'  received subject=',msgSubj
+    ⎕←'  headers shape=',(⍕⍴msgHdrs)
+    :If 2=⍴⍴msgHdrs
+        passed+←1 ⋄ ⎕←'  ✓ headers received as matrix'
+    :Else
+        pass←0 ⋄ ⎕←'  ✗ expected 2D headers, got shape ',(⍕⍴msgHdrs)
+    :EndIf
+:Else
+    pass←0 ⋄ ⎕←'  ✗ expected Msg, got ',evt
+:EndIf
+
+⍝ ── Test: Multiple subscriptions ────────────────────────────────────
+
+⎕←''
+⎕←'Test: Multiple subscriptions'
+(rc sub1)←nats_sub 'C1' 'sub1' 'multi.>'
+(rc2 sub2)←nats_sub 'C1' 'sub2' 'multi.>'
+tests+←1
+:If (rc=0)∧(rc2=0)
+    passed+←1 ⋄ ⎕←'  ✓ two subs created: ',sub1,' and ',sub2
+:Else
+    pass←0 ⋄ ⎕←'  ✗ sub creation failed'
+:EndIf
+
+⍝ Publish — both should receive
+rc←nats_pub 'C1' 'multi.test' 'both get this'
+(rc obj1 evt1 d1)←zbus_wait 'C1' 3000 0 0 0
+(rc obj2 evt2 d2)←zbus_wait 'C1' 3000 0 0 0
+tests+←1
+:If (evt1≡'Msg')∧(evt2≡'Msg')
+    passed+←1 ⋄ ⎕←'  ✓ both subs received: ',obj1,' and ',obj2
+:Else
+    pass←0 ⋄ ⎕←'  ✗ not both received: ',evt1,' ',evt2
+:EndIf
+
+⍝ ── Test: Describe subscription ─────────────────────────────────────
+
+⎕←''
+⎕←'Test: Describe subscription'
+(rc info)←zbus_describe sub1 0
+tests+←1
+:If rc=0
+    ⎕←'  [1]=',1⊃info
+    ⎕←'  [2]=',2⊃info
+    ⎕←'  [3]=',3⊃info
+    ⎕←'  [4]=',4⊃info
+    :If (2⊃info)≡'Subscription'
+        passed+←1 ⋄ ⎕←'  ✓ subscription describe works'
+    :Else
+        pass←0 ⋄ ⎕←'  ✗ unexpected type'
+    :EndIf
+:Else
+    pass←0 ⋄ ⎕←'  ✗ describe failed rc=',⍕rc
+:EndIf
+
+⍝ ── Test: Close subscription (cascade) ──────────────────────────────
+
+⎕←''
+⎕←'Test: Close subscription'
+rc←zbus_close ⊂sub1
+tests+←1
+:If rc=0
+    passed+←1 ⋄ ⎕←'  ✓ close sub1 rc=0'
+:Else
+    pass←0 ⋄ ⎕←'  ✗ close failed rc=',⍕rc
+:EndIf
+
+⍝ Verify it no longer exists
+rc←zbus_exists ⊂sub1
+tests+←1
+:If rc≠0
+    passed+←1 ⋄ ⎕←'  ✓ sub1 no longer exists'
+:Else
+    pass←0 ⋄ ⎕←'  ✗ sub1 still exists after close'
+:EndIf
+
+⍝ sub2 should still work — but first drain the synthetic Closed event for sub1
+(rc obj evt data)←zbus_wait 'C1' 1000 0 0 0
+:If evt≡'Closed' ⋄ ⎕←'  (drained Closed event for ',obj,')' ⋄ :EndIf
+
+rc←nats_pub 'C1' 'multi.alive' 'still here'
+(rc obj evt data)←zbus_wait 'C1' 3000 0 0 0
+tests+←1
+:If (evt≡'Msg')∧(obj≡sub2)
+    passed+←1 ⋄ ⎕←'  ✓ sub2 still active after sub1 closed'
+:Else
+    pass←0 ⋄ ⎕←'  ✗ sub2 state unexpected: evt=',evt,' obj=',obj
+:EndIf
+
+⍝ ── Test: GetProperty ────────────────────────────────────────────────
+
+⎕←''
+⎕←'Test: GetProperty'
+(rc val)←zbus_getprop 'C1' 'State' 0
+tests+←1
+:If (rc=0)∧(val≡'Connected')
+    passed+←1 ⋄ ⎕←'  ✓ State=Connected'
+:Else
+    pass←0 ⋄ ⎕←'  ✗ State property: rc=',(⍕rc),' val=',val
+:EndIf
+
+(rc val)←zbus_getprop 'C1' 'Url' 0
+tests+←1
+:If (rc=0)∧(val≡'nats://localhost:4222')
+    passed+←1 ⋄ ⎕←'  ✓ Url=nats://localhost:4222'
+:Else
+    pass←0 ⋄ ⎕←'  ✗ Url property: rc=',(⍕rc),' val=',val
+:EndIf
+
+⍝ ── Cleanup ──────────────────────────────────────────────────────────
+
+⎕←''
+rc←zbus_close ⊂'C1'
+
+⎕←'══════════════════════════════════════════'
+⎕←' Results: ',(⍕passed),'/',(⍕tests),' passed'
+:If pass
+    ⎕←' ═══ ALL CORE TESTS PASSED ═══'
+:Else
+    ⎕←' *** SOME TESTS FAILED ***'
+:EndIf
+⎕←'══════════════════════════════════════════'

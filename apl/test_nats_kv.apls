@@ -1,0 +1,142 @@
+⍝ ZBus.Nats Key/Value Store test suite
+⍝ Validates: bucket create, put, get, delete, watch
+⍝ Requires nats-server -js running on localhost:4222
+
+⎕IO ⎕ML←1
+pass←1
+tests←0 ⋄ passed←0
+
+dll←'D:\devel\Z-Format\src\ZBus.Nats\bin\Release\net10.0\win-x64\publish\ZBus.Nats.dll'
+
+⍝ ── Define ⎕NA bindings ──────────────────────────────────────────────
+
+'zbus_init'         ⎕NA 'I4 ',dll,'|zbus_init <0T1 >Z'
+'zbus_wait'         ⎕NA 'I4 ',dll,'|zbus_wait& <0T1 I4 >Z >Z >Z'
+'zbus_close'        ⎕NA 'I4 ',dll,'|zbus_close <0T1'
+'zbus_describe'     ⎕NA 'I4 ',dll,'|zbus_describe <0T1 >Z'
+'nats_connect'      ⎕NA 'I4 ',dll,'|zbus_nats_connect <0T1 <0T1'
+'nats_kv'           ⎕NA 'I4 ',dll,'|zbus_nats_kv <0T1 =Z'
+'nats_kv_get'       ⎕NA 'I4 ',dll,'|zbus_nats_kv_get <0T1 <0T1 >Z'
+'nats_kv_put'       ⎕NA 'I4 ',dll,'|zbus_nats_kv_put <0T1 <0T1 =Z'
+'nats_kv_del'       ⎕NA 'I4 ',dll,'|zbus_nats_kv_del <0T1 <0T1'
+'nats_kv_watch'     ⎕NA 'I4 ',dll,'|zbus_nats_kv_watch <0T1 <0T1'
+
+⎕←'══════════════════════════════════════════'
+⎕←' ZBus.Nats Key/Value Store Tests'
+⎕←'══════════════════════════════════════════'
+⎕←''
+
+⍝ ── Setup ────────────────────────────────────────────────────────────
+
+(rc rootName)←zbus_init 'KV' 0
+rc←nats_connect 'KV' 'nats://localhost:4222'
+(rc obj evt data)←zbus_wait 'KV' 5000 0 0 0
+:If evt≢'Connected' ⋄ ⎕←'FATAL: not connected' ⋄ ⎕OFF 1 ⋄ :EndIf
+⎕←'Connected to NATS'
+⎕←''
+
+⍝ ── Test 1: Create bucket ───────────────────────────────────────────
+
+⎕←'Test 1: Create bucket'
+(rc bucketName)←nats_kv 'KV' 'settings'
+tests+←1
+:If rc=0
+    passed+←1 ⋄ ⎕←'  ✓ bucket created: ',bucketName
+:Else
+    pass←0 ⋄ ⎕←'  ✗ bucket creation failed rc=',⍕rc
+:EndIf
+
+⍝ ── Test 2: Put values ──────────────────────────────────────────────
+
+⎕←''
+⎕←'Test 2: Put values'
+(rc rev1)←nats_kv_put bucketName 'api.timeout' '30'
+tests+←1
+:If rc=0
+    passed+←1 ⋄ ⎕←'  ✓ put api.timeout rev=',⍕rev1
+:Else
+    pass←0 ⋄ ⎕←'  ✗ put failed rc=',⍕rc
+:EndIf
+
+(rc rev2)←nats_kv_put bucketName 'api.retries' '3'
+tests+←1
+:If rc=0
+    passed+←1 ⋄ ⎕←'  ✓ put api.retries rev=',⍕rev2
+:Else
+    pass←0 ⋄ ⎕←'  ✗ put failed rc=',⍕rc
+:EndIf
+
+⍝ ── Test 3: Get value ───────────────────────────────────────────────
+
+⎕←''
+⎕←'Test 3: Get value'
+(rc result)←nats_kv_get bucketName 'api.timeout' 0
+tests+←1
+:If rc=0
+    val←1⊃result
+    rev←2⊃result
+    ⎕←'  value bytes: ',⍕val
+    ⎕←'  revision: ',⍕rev
+    passed+←1 ⋄ ⎕←'  ✓ got value with revision'
+:Else
+    pass←0 ⋄ ⎕←'  ✗ get failed rc=',⍕rc
+:EndIf
+
+⍝ ── Test 4: Update and verify revision changes ──────────────────────
+
+⎕←''
+⎕←'Test 4: Update value'
+(rc rev3)←nats_kv_put bucketName 'api.timeout' '60'
+tests+←1
+:If (rc=0)∧(rev3>rev1)
+    passed+←1 ⋄ ⎕←'  ✓ updated, new rev=',⍕rev3
+:Else
+    pass←0 ⋄ ⎕←'  ✗ update failed rc=',(⍕rc),' rev=',⍕rev3
+:EndIf
+
+⍝ ── Test 5: Delete key ──────────────────────────────────────────────
+
+⎕←''
+⎕←'Test 5: Delete key'
+rc←nats_kv_del bucketName 'api.retries'
+tests+←1
+:If rc=0
+    passed+←1 ⋄ ⎕←'  ✓ deleted api.retries'
+:Else
+    pass←0 ⋄ ⎕←'  ✗ delete failed rc=',⍕rc
+:EndIf
+
+⍝ Verify it's gone
+(rc result)←nats_kv_get bucketName 'api.retries' 0
+tests+←1
+:If rc≠0
+    passed+←1 ⋄ ⎕←'  ✓ confirmed deleted (get returns rc=',⍕rc,')'
+:Else
+    pass←0 ⋄ ⎕←'  ✗ key still exists after delete'
+:EndIf
+
+⍝ ── Test 6: Describe bucket ─────────────────────────────────────────
+
+⎕←''
+⎕←'Test 6: Describe bucket'
+(rc info)←zbus_describe bucketName 0
+tests+←1
+:If (rc=0)∧((2⊃info)≡'KVBucket')
+    passed+←1 ⋄ ⎕←'  ✓ type=KVBucket'
+:Else
+    pass←0 ⋄ ⎕←'  ✗ describe failed rc=',⍕rc
+:EndIf
+
+⍝ ── Cleanup ──────────────────────────────────────────────────────────
+
+⎕←''
+rc←zbus_close ⊂'KV'
+
+⎕←'══════════════════════════════════════════'
+⎕←' Results: ',(⍕passed),'/',(⍕tests),' passed'
+:If pass
+    ⎕←' ═══ ALL KV TESTS PASSED ═══'
+:Else
+    ⎕←' *** SOME TESTS FAILED ***'
+:EndIf
+⎕←'══════════════════════════════════════════'

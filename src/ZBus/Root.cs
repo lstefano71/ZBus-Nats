@@ -101,7 +101,28 @@ public sealed class Root : IDisposable
     /// </summary>
     public ZValue? GetProperty(string fullName, string propName)
     {
-        // Kernel-owned properties
+        // Kernel-owned properties for children
+        if (propName.Equals("Children", StringComparison.OrdinalIgnoreCase))
+        {
+            var children = Registry.Children(fullName);
+            return ZValue.FromStringArray(children);
+        }
+
+        // For root-level queries, try adapters first (they know connection state)
+        if (fullName.Equals(Name, StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var adapter in _adapters.Values)
+            {
+                var result = adapter.GetProperty(fullName, propName);
+                if (result != null) return result;
+            }
+            // Kernel fallback for State
+            if (propName.Equals("State", StringComparison.OrdinalIgnoreCase))
+                return ZValue.FromChars("Started");
+            return null;
+        }
+
+        // Kernel-owned properties for registered objects
         if (propName.Equals("State", StringComparison.OrdinalIgnoreCase))
             return ZValue.FromChars(Registry.Exists(fullName) ? "Started" : "Unknown");
         if (propName.Equals("ObjectType", StringComparison.OrdinalIgnoreCase))
@@ -109,17 +130,34 @@ public sealed class Root : IDisposable
             var e = Registry.GetEntry(fullName);
             return e != null ? ZValue.FromChars(e.ObjectType) : null;
         }
-        if (propName.Equals("Children", StringComparison.OrdinalIgnoreCase))
-        {
-            var children = Registry.Children(fullName);
-            return ZValue.FromStringArray(children);
-        }
 
         // Dispatch to adapter
         var entry = Registry.GetEntry(fullName);
         if (entry == null) return null;
-        var adapter = GetAdapter(entry.AdapterId);
-        return adapter?.GetProperty(fullName, propName);
+        var adapter2 = GetAdapter(entry.AdapterId);
+        return adapter2?.GetProperty(fullName, propName);
+    }
+
+    /// <summary>
+    /// Describe an object — dispatches to adapter.
+    /// </summary>
+    public ZValue? Describe(string fullName)
+    {
+        // Root-level describe: try each adapter
+        if (fullName.Equals(Name, StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var adapter in _adapters.Values)
+            {
+                var result = adapter.Describe(fullName);
+                if (result != null) return result;
+            }
+            return null;
+        }
+
+        var entry = Registry.GetEntry(fullName);
+        if (entry == null) return null;
+        var adapter2 = GetAdapter(entry.AdapterId);
+        return adapter2?.Describe(fullName);
     }
 
     /// <summary>

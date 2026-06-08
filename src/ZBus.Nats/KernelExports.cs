@@ -226,6 +226,41 @@ public static unsafe class KernelExports
         }
     }
 
+    /// <summary>
+    /// Describe an object (type, state, adapter metadata).
+    /// ⎕NA: 'I4 ZBus.Nats|zbus_describe &lt;0T1 >Z'
+    /// APL: (rc info) ← describe 'N1.sub1' 0
+    /// </summary>
+    [UnmanagedCallersOnly(EntryPoint = "zbus_describe")]
+    public static int ZBusDescribe(nint namePtr, nint* outZ)
+    {
+        try
+        {
+            var name = Marshal.PtrToStringAnsi(namePtr) ?? "";
+            var root = Bus.FindRoot(name);
+            if (root == null)
+            {
+                WriteEmpty(outZ);
+                return ReturnCodes.NotFound;
+            }
+
+            var desc = root.Describe(name);
+            if (desc == null)
+            {
+                WriteEmpty(outZ);
+                return ReturnCodes.NotFound;
+            }
+
+            ZWriter.WriteToNative((nint)outZ, desc);
+            return ReturnCodes.OK;
+        }
+        catch
+        {
+            WriteEmpty(outZ);
+            return ReturnCodes.InternalError;
+        }
+    }
+
     private static void WriteEmpty(nint* outZ)
     {
         ZWriter.WriteToNative((nint)outZ, ZValue.EmptyChar);

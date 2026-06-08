@@ -1,0 +1,131 @@
+⍝ ZBus.Nats Request/Reply test
+⍝ Tests the request/reply mailbox pattern
+⍝ Requires nats-server running on localhost:4222
+
+⎕IO ⎕ML←1
+pass←1
+tests←0 ⋄ passed←0
+
+dll←'D:\devel\Z-Format\src\ZBus.Nats\bin\Release\net10.0\win-x64\publish\ZBus.Nats.dll'
+
+⍝ ── Define ⎕NA bindings ──────────────────────────────────────────────
+
+'zbus_init'         ⎕NA 'I4 ',dll,'|zbus_init <0T1 >Z'
+'zbus_wait'         ⎕NA 'I4 ',dll,'|zbus_wait& <0T1 I4 >Z >Z >Z'
+'zbus_close'        ⎕NA 'I4 ',dll,'|zbus_close <0T1'
+'nats_connect'      ⎕NA 'I4 ',dll,'|zbus_nats_connect <0T1 <0T1'
+'nats_pub'          ⎕NA 'I4 ',dll,'|zbus_nats_pub <0T1 <0T1 <Z'
+'nats_sub'          ⎕NA 'I4 ',dll,'|zbus_nats_sub <0T1 <0T1 =Z'
+'nats_request'      ⎕NA 'I4 ',dll,'|zbus_nats_request <0T1 <0T1 <0T1 I4 =Z'
+
+⎕←'══════════════════════════════════════════'
+⎕←' ZBus.Nats Request/Reply Tests'
+⎕←'══════════════════════════════════════════'
+⎕←''
+
+⍝ ── Setup: two roots (requester + responder) ─────────────────────────
+
+(rc rn1)←zbus_init 'REQ' 0
+rc←nats_connect 'REQ' 'nats://localhost:4222'
+(rc obj evt data)←zbus_wait 'REQ' 5000 0 0 0
+:If evt≢'Connected' ⋄ ⎕←'FATAL: REQ not connected' ⋄ ⎕OFF 1 ⋄ :EndIf
+
+(rc rn2)←zbus_init 'SVC' 0
+rc←nats_connect 'SVC' 'nats://localhost:4222'
+(rc obj evt data)←zbus_wait 'SVC' 5000 0 0 0
+:If evt≢'Connected' ⋄ ⎕←'FATAL: SVC not connected' ⋄ ⎕OFF 1 ⋄ :EndIf
+
+⎕←'Both roots connected'
+⎕←''
+
+⍝ ── Test 1: Basic request/reply ──────────────────────────────────────
+
+⎕←'Test 1: Basic request/reply'
+
+⍝ Set up a responder on SVC
+(rc subName)←nats_sub 'SVC' 'responder' 'svc.echo'
+:If rc≠0 ⋄ ⎕←'  FATAL: subscribe failed' ⋄ ⎕OFF 1 ⋄ :EndIf
+
+⍝ Send request from REQ
+(rc reqName)←nats_request 'REQ' 'R1' 'svc.echo' 5000 'ping'
+tests+←1
+:If rc=0
+    passed+←1 ⋄ ⎕←'  ✓ request sent, mailbox=',reqName
+:Else
+    pass←0 ⋄ ⎕←'  ✗ request failed rc=',⍕rc
+:EndIf
+
+⍝ Responder receives the request via Msg event
+(rc obj evt data)←zbus_wait 'SVC' 5000 0 0 0
+tests+←1
+:If evt≡'Msg'
+    msgSubj←1⊃data
+    replyTo←2⊃data
+    msgPayload←3⊃data
+    ⎕←'  ✓ responder got request on ',msgSubj
+    ⎕←'    replyTo=',replyTo
+    ⍝ Reply by publishing to the replyTo subject
+    rc←nats_pub 'SVC' replyTo 'pong'
+    :If rc=0
+        ⎕←'    replied with pong'
+        passed+←1
+    :Else
+        pass←0 ⋄ ⎕←'    ✗ reply publish failed rc=',⍕rc
+    :EndIf
+:Else
+    pass←0 ⋄ ⎕←'  ✗ responder expected Msg, got ',evt
+:EndIf
+
+⍝ Requester receives the reply via Reply event on the mailbox
+(rc obj evt data)←zbus_wait 'REQ' 5000 0 0 0
+tests+←1
+:If evt≡'Reply'
+    replyPayload←3⊃data
+    ⎕←'  reply obj=',obj
+    ⎕←'  reply payload bytes: ',⍕replyPayload
+    :If obj≡reqName
+        passed+←1 ⋄ ⎕←'  ✓ Reply event on correct mailbox'
+    :Else
+        pass←0 ⋄ ⎕←'  ✗ Reply on wrong object: ',obj,' expected ',reqName
+    :EndIf
+:Else
+    pass←0 ⋄ ⎕←'  ✗ expected Reply, got ',evt,' on ',obj
+:EndIf
+
+⍝ ── Test 2: Request timeout ─────────────────────────────────────────
+
+⎕←''
+⎕←'Test 2: Request timeout'
+
+⍝ Request to a subject nobody listens on, with 1s timeout
+(rc reqName2)←nats_request 'REQ' 'R2' 'svc.nobody' 1000 'hello'
+tests+←1
+:If rc=0
+    passed+←1 ⋄ ⎕←'  ✓ request sent, mailbox=',reqName2
+:Else
+    pass←0 ⋄ ⎕←'  ✗ request failed rc=',⍕rc
+:EndIf
+
+⍝ Should get Timeout event
+(rc obj evt data)←zbus_wait 'REQ' 3000 0 0 0
+tests+←1
+:If evt≡'Timeout'
+    passed+←1 ⋄ ⎕←'  ✓ Timeout event received on ',obj
+:Else
+    pass←0 ⋄ ⎕←'  ✗ expected Timeout, got ',evt,' on ',obj
+:EndIf
+
+⍝ ── Cleanup ──────────────────────────────────────────────────────────
+
+⎕←''
+rc←zbus_close ⊂'REQ'
+rc←zbus_close ⊂'SVC'
+
+⎕←'══════════════════════════════════════════'
+⎕←' Results: ',(⍕passed),'/',(⍕tests),' passed'
+:If pass
+    ⎕←' ═══ ALL REQUEST/REPLY TESTS PASSED ═══'
+:Else
+    ⎕←' *** SOME TESTS FAILED ***'
+:EndIf
+⎕←'══════════════════════════════════════════'

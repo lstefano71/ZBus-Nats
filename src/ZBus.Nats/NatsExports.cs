@@ -43,6 +43,7 @@ public static unsafe class NatsExports
     /// Publish a message to a subject.
     /// ⎕NA: 'I4 ZBus.Nats|zbus_nats_pub &lt;0T1 &lt;0T1 &lt;Z'
     /// APL: rc ← nats_pub 'N1' 'subject' 'hello'
+    /// APL: rc ← nats_pub 'N1' 'subject' ('hello' hdrs)
     /// </summary>
     [UnmanagedCallersOnly(EntryPoint = "zbus_nats_pub")]
     public static int ZBusNatsPub(nint rootNamePtr, nint subjectPtr, nint* dataZ)
@@ -52,19 +53,20 @@ public static unsafe class NatsExports
             var rootName = Marshal.PtrToStringAnsi(rootNamePtr) ?? "";
             var subject = Marshal.PtrToStringAnsi(subjectPtr) ?? "";
 
-            // Read =Z input
+            // Read <Z input
             nint payloadPtr = *dataZ;
             byte* z = (byte*)payloadPtr;
             int totalSize = (z[0] << 24) | (z[1] << 16) | (z[2] << 8) | z[3];
             var span = new ReadOnlySpan<byte>(z, totalSize);
             var value = ZReader.Read(span);
 
-            // Extract raw payload bytes
+            // Shape-driven: simple = payload only, 2-el nested = (payload, headers)
             byte[] payload;
+            NATS.Client.Core.NatsHeaders? headers = null;
             if (value.Type == ZType.Nested && value.Children.Length == 2)
             {
-                // Shape-driven: (payload, headers) — headers ignored for now
                 payload = ExtractPayloadBytes(value[0]);
+                headers = NatsAdapter.ParseHeaders(value[1]);
             }
             else
             {
@@ -73,7 +75,7 @@ public static unsafe class NatsExports
 
             return Dispatch.Execute<NatsAdapter>(rootName, (adapter, root) =>
             {
-                adapter.PublishAsync(subject, payload).GetAwaiter().GetResult();
+                adapter.PublishAsync(subject, payload, headers).GetAwaiter().GetResult();
                 return ReturnCodes.OK;
             });
         }
@@ -122,11 +124,7 @@ public static unsafe class NatsExports
             // Done reading input — now we can reuse the =Z slot for output
             return Dispatch.Execute<NatsAdapter>(rootName, (adapter, root) =>
             {
-                var fullName = string.IsNullOrEmpty(leafName)
-                    ? $"{rootName}.sub_{Guid.NewGuid():N}"[..20]
-                    : $"{rootName}.{leafName}";
-
-                adapter.Subscribe(rootName, leafName, subject, queueGroup);
+                var fullName = adapter.Subscribe(rootName, leafName, subject, queueGroup);
                 ZWriter.WriteToNative((nint)subjectZ, ZValue.FromChars(fullName));
                 return ReturnCodes.OK;
             });
@@ -146,5 +144,61 @@ public static unsafe class NatsExports
         }
         // APLSINT or APLBOOL → byte[]
         return value.AsBytes();
+    }
+
+    /// <summary>
+    /// Send a request and create a mailbox to receive the reply.
+    /// ⎕NA: 'I4 ZBus.Nats|zbus_nats_request &lt;0T1 &lt;0T1 &lt;0T1 I4 =Z'
+    /// APL: (rc reqName) ← nats_request 'N1' 'R1' 'svc.add' 5000 payload
+    /// APL: (rc reqName) ← nats_request 'N1' '' 'svc.add' 5000 (payload hdrs)
+    /// Input =Z: payload (char/byte vector) or (payload, headers) nested.
+    /// Output =Z: the full dotted name of the request mailbox object.
+    /// </summary>
+    [UnmanagedCallersOnly(EntryPoint = "zbus_nats_request")]
+    public static int ZBusNatsRequest(nint rootNamePtr, nint leafNamePtr, nint subjectPtr, int timeoutMs, nint* dataZ)
+    {
+        try
+        {
+            var rootName = Marshal.PtrToStringAnsi(rootNamePtr) ?? "";
+            var leafName = Marshal.PtrToStringAnsi(leafNamePtr) ?? "";
+            var subject = Marshal.PtrToStringAnsi(subjectPtr) ?? "";
+
+            // Read =Z input
+            nint payloadPtr = *dataZ;
+            byte* z = (byte*)payloadPtr;
+            int totalSize = (z[0] << 24) | (z[1] << 16) | (z[2] << 8) | z[3];
+            var span = new ReadOnlySpan<byte>(z, totalSize);
+            var value = ZReader.Read(span);
+
+            byte[] payload;
+            NATS.Client.Core.NatsHeaders? headers = null;
+            if (value.Type == ZType.Nested && value.Children.Length == 2)
+            {
+                payload = ExtractPayloadBytes(value[0]);
+                headers = NatsAdapter.ParseHeaders(value[1]);
+            }
+            else
+            {
+                payload = ExtractPayloadBytes(value);
+            }
+
+            // Done reading input — reuse =Z for output
+            return Dispatch.Execute<NatsAdapter>(rootName, (adapter, root) =>
+            {
+                var fullName = adapter.Request(rootName, leafName, subject, payload, headers, timeoutMs);
+                if (string.IsNullOrEmpty(fullName))
+                {
+                    ZWriter.WriteToNative((nint)dataZ, ZValue.EmptyChar);
+                    return ReturnCodes.InvalidHandle;
+                }
+                ZWriter.WriteToNative((nint)dataZ, ZValue.FromChars(fullName));
+                return ReturnCodes.OK;
+            });
+        }
+        catch
+        {
+            ZWriter.WriteToNative((nint)dataZ, ZValue.EmptyChar);
+            return ReturnCodes.InternalError;
+        }
     }
 }

@@ -1,0 +1,154 @@
+⍝ ZBus.Nats JetStream test suite
+⍝ Validates: stream create, JS publish, consumer, JsMsg events, ack
+⍝ Requires nats-server -js running on localhost:4222
+
+⎕IO ⎕ML←1
+pass←1
+tests←0 ⋄ passed←0
+
+dll←'D:\devel\Z-Format\src\ZBus.Nats\bin\Release\net10.0\win-x64\publish\ZBus.Nats.dll'
+
+⍝ ── Define ⎕NA bindings ──────────────────────────────────────────────
+
+'zbus_init'         ⎕NA 'I4 ',dll,'|zbus_init <0T1 >Z'
+'zbus_wait'         ⎕NA 'I4 ',dll,'|zbus_wait& <0T1 I4 >Z >Z >Z'
+'zbus_close'        ⎕NA 'I4 ',dll,'|zbus_close <0T1'
+'zbus_describe'     ⎕NA 'I4 ',dll,'|zbus_describe <0T1 >Z'
+'nats_connect'      ⎕NA 'I4 ',dll,'|zbus_nats_connect <0T1 <0T1'
+'nats_stream'       ⎕NA 'I4 ',dll,'|zbus_nats_stream <0T1 <0T1 =Z'
+'nats_jspub'        ⎕NA 'I4 ',dll,'|zbus_nats_jspub <0T1 <0T1 =Z'
+'nats_consumer'     ⎕NA 'I4 ',dll,'|zbus_nats_consumer <0T1 <0T1 <0T1 =Z'
+'nats_ack'          ⎕NA 'I4 ',dll,'|zbus_nats_ack <0T1 I4'
+
+⎕←'══════════════════════════════════════════'
+⎕←' ZBus.Nats JetStream Tests'
+⎕←'══════════════════════════════════════════'
+⎕←''
+
+⍝ ── Setup ────────────────────────────────────────────────────────────
+
+(rc rootName)←zbus_init 'JS' 0
+rc←nats_connect 'JS' 'nats://localhost:4222'
+(rc obj evt data)←zbus_wait 'JS' 5000 0 0 0
+:If evt≢'Connected' ⋄ ⎕←'FATAL: not connected (',evt,')' ⋄ ⎕OFF 1 ⋄ :EndIf
+⎕←'Connected to NATS (JetStream enabled)'
+⎕←''
+
+⍝ ── Test 1: Create stream ───────────────────────────────────────────
+
+⎕←'Test 1: Create stream'
+(rc streamName)←nats_stream 'JS' 'ORDERS' 'orders.>'
+tests+←1
+:If rc=0
+    passed+←1 ⋄ ⎕←'  ✓ stream created: ',streamName
+:Else
+    pass←0 ⋄ ⎕←'  ✗ stream creation failed rc=',⍕rc
+    ⎕←'  (name=',streamName,')'
+:EndIf
+
+⍝ ── Test 2: Describe stream ─────────────────────────────────────────
+
+⎕←''
+⎕←'Test 2: Describe stream'
+(rc info)←zbus_describe streamName 0
+tests+←1
+:If (rc=0)∧((2⊃info)≡'Stream')
+    passed+←1 ⋄ ⎕←'  ✓ type=Stream, subjects=',4⊃info
+:Else
+    pass←0 ⋄ ⎕←'  ✗ describe failed or wrong type, rc=',⍕rc
+:EndIf
+
+⍝ ── Test 3: JS Publish ──────────────────────────────────────────────
+
+⎕←''
+⎕←'Test 3: JetStream publish'
+(rc ack)←nats_jspub 'JS' 'orders.new' 'order-001'
+tests+←1
+:If rc=0
+    ⎕←'  stream=',1⊃ack
+    ⎕←'  seq=',⍕2⊃ack
+    :If (1⊃ack)≡'ORDERS'
+        passed+←1 ⋄ ⎕←'  ✓ published to ORDERS, seq=',(⍕2⊃ack)
+    :Else
+        pass←0 ⋄ ⎕←'  ✗ unexpected stream name: ',1⊃ack
+    :EndIf
+:Else
+    pass←0 ⋄ ⎕←'  ✗ jspub failed rc=',⍕rc
+:EndIf
+
+⍝ Publish a second message
+(rc ack2)←nats_jspub 'JS' 'orders.new' 'order-002'
+
+⍝ ── Test 4: Create consumer ─────────────────────────────────────────
+
+⎕←''
+⎕←'Test 4: Create consumer'
+(rc consumerName)←nats_consumer streamName 'proc' '' 'all'
+tests+←1
+:If rc=0
+    passed+←1 ⋄ ⎕←'  ✓ consumer created: ',consumerName
+:Else
+    pass←0 ⋄ ⎕←'  ✗ consumer creation failed rc=',(⍕rc),' name=',consumerName
+:EndIf
+
+⍝ ── Test 5: Receive JsMsg events ────────────────────────────────────
+
+⎕←''
+⎕←'Test 5: Receive JsMsg events'
+
+⍝ Should receive the two messages we published
+(rc obj evt data)←zbus_wait 'JS' 5000 0 0 0
+tests+←1
+:If evt≡'JsMsg'
+    msgSubj←1⊃data
+    msgPayload←2⊃data
+    msgSeq←4⊃data
+    ⎕←'  msg1: subject=',msgSubj,' seq=',⍕msgSeq
+    passed+←1 ⋄ ⎕←'  ✓ first JsMsg received'
+:Else
+    pass←0 ⋄ ⎕←'  ✗ expected JsMsg, got ',evt,' on ',obj
+:EndIf
+
+(rc obj evt data)←zbus_wait 'JS' 5000 0 0 0
+tests+←1
+:If evt≡'JsMsg'
+    msgSeq2←4⊃data
+    ⎕←'  msg2: seq=',⍕msgSeq2
+    passed+←1 ⋄ ⎕←'  ✓ second JsMsg received'
+:Else
+    pass←0 ⋄ ⎕←'  ✗ expected second JsMsg, got ',evt
+:EndIf
+
+⍝ ── Test 6: Acknowledge messages ────────────────────────────────────
+
+⎕←''
+⎕←'Test 6: Acknowledge messages'
+rc←nats_ack consumerName msgSeq
+tests+←1
+:If rc=0
+    passed+←1 ⋄ ⎕←'  ✓ ack seq ',(⍕msgSeq),' rc=0'
+:Else
+    pass←0 ⋄ ⎕←'  ✗ ack failed rc=',⍕rc
+:EndIf
+
+rc←nats_ack consumerName msgSeq2
+tests+←1
+:If rc=0
+    passed+←1 ⋄ ⎕←'  ✓ ack seq ',(⍕msgSeq2),' rc=0'
+:Else
+    pass←0 ⋄ ⎕←'  ✗ ack failed rc=',⍕rc
+:EndIf
+
+⍝ ── Cleanup ──────────────────────────────────────────────────────────
+
+⎕←''
+rc←zbus_close ⊂'JS'
+
+⎕←'══════════════════════════════════════════'
+⎕←' Results: ',(⍕passed),'/',(⍕tests),' passed'
+:If pass
+    ⎕←' ═══ ALL JETSTREAM TESTS PASSED ═══'
+:Else
+    ⎕←' *** SOME TESTS FAILED ***'
+:EndIf
+⎕←'══════════════════════════════════════════'
