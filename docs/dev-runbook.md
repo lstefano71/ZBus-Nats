@@ -5,6 +5,7 @@
 The repo currently has one test script:
 
 - `probe\utf_probe_test.apls`
+- `samples\ZProbeManaged\run-e2e.apls`
 
 Run it with Dyalog Script:
 
@@ -13,6 +14,13 @@ Run it with Dyalog Script:
 ```
 
 The script writes its log to `%TEMP%\utf_probe_log.txt`.
+
+To run the sample DLL end-to-end, use:
+
+```powershell
+cd D:\devel\Z-Format\samples\ZProbeManaged
+.\run-e2e.ps1
+```
 
 ## Build the C probe DLLs
 

@@ -1,0 +1,53 @@
+⍝ End-to-end smoke test for the AOT sample DLL.
+⍝ Assumes the current directory is samples\ZProbeManaged.
+
+
+⍝ Debug flag: workspace check after every line (catches corruption)
+old_dflags←2 ⎕NQ '#' 'setdflags' 64
+⎕←'dflags: 64'
+
+dll←'ZProbeManaged\bin\Release\net10.0\win-x64\publish\ZProbeManaged'
+
+'zecho' ⎕NA dll,'|z_echo =Z'
+'zstr'  ⎕NA dll,'|z_make_string >Z'
+'zint'  ⎕NA dll,'|z_make_int >Z'
+'znest' ⎕NA dll,'|z_make_nested >Z'
+
+Check←{
+    ⍺≡⍵: 0
+    ⎕←'FAIL expected: ',⍕⍺
+    ⎕←'FAIL actual:   ',⍕⍵
+    ⎕OFF 1
+}
+
+expectedString←'ZFormat works!'
+expectedInt←42
+expectedNested←0 'OK'
+expectedCafe←'café'
+expectedEmoji←⎕UCS 128512
+
+⎕←'--- z_make_string ---'
+str←zstr 0
+str Check expectedString
+
+⎕←'--- z_make_int ---'
+int←zint 0
+int Check expectedInt
+
+⎕←'--- z_make_nested ---'
+nested←znest 0
+nested Check expectedNested
+
+⎕←'--- z_echo on café ---'
+cafe←zecho ⊂expectedCafe
+cafe Check expectedCafe
+
+⎕←'--- z_echo on emoji ---'
+emoji←zecho ⊂expectedEmoji
+emoji Check expectedEmoji
+
+⎕←'--- z_echo on nested ---'
+roundTripNested←zecho ⊂expectedNested
+roundTripNested Check expectedNested
+
+⎕OFF 0
