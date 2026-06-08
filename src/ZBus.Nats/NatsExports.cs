@@ -167,6 +167,8 @@ public static unsafe class NatsExports
     /// APL: (rc reqName) ← nats_request 'N1' '' 'svc.add' 5000 (payload hdrs)
     /// Input =Z: payload (char/byte vector) or (payload, headers) nested.
     /// Output =Z: the full dotted name of the request mailbox object.
+    /// Negative timeout = targeted delivery (reply won't bubble up to root waiter).
+    /// Use when you have concurrent waits at different hierarchy levels.
     /// </summary>
     [UnmanagedCallersOnly(EntryPoint = "zbus_nats_request")]
     public static int ZBusNatsRequest(nint rootNamePtr, nint leafNamePtr, nint subjectPtr, int timeoutMs, nint* dataZ)
@@ -176,6 +178,8 @@ public static unsafe class NatsExports
             var rootName = Marshal.PtrToStringAnsi(rootNamePtr) ?? "";
             var leafName = Marshal.PtrToStringAnsi(leafNamePtr) ?? "";
             var subject = Marshal.PtrToStringAnsi(subjectPtr) ?? "";
+            bool targeted = timeoutMs < 0;
+            int actualTimeout = Math.Abs(timeoutMs);
 
             // Read =Z input
             nint payloadPtr = *dataZ;
@@ -199,7 +203,7 @@ public static unsafe class NatsExports
             // Done reading input — reuse =Z for output
             return Dispatch.Execute<NatsAdapter>(rootName, (adapter, root) =>
             {
-                var fullName = adapter.Request(rootName, leafName, subject, payload, headers, timeoutMs);
+                var fullName = adapter.Request(rootName, leafName, subject, payload, headers, actualTimeout, targeted);
                 if (string.IsNullOrEmpty(fullName))
                 {
                     ZWriter.WriteToNative((nint)dataZ, ZValue.EmptyChar);

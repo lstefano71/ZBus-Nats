@@ -131,6 +131,17 @@ The `=Z` parameter carries the subject pattern in and returns the full object na
 
 The mailbox name can be empty `''` for auto-generated names.
 
+**Targeted delivery** — use negative timeout when you have concurrent waits at
+different hierarchy levels (e.g., inverse request/respond pattern):
+
+```apl
+(rc mailbox)←request 'N1' 'R1' 'svc.echo' ¯5000 'hello'
+⍝ Reply will only be visible to waiters on 'N1.R1', won't bubble to root
+(rc obj evt data)←wait 'N1.R1' 6000 0 0 0
+```
+
+For normal single-event-loop usage (one `wait` on root), positive timeout is correct.
+
 ### Close
 
 ```apl

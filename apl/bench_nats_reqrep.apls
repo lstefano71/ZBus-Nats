@@ -1,0 +1,117 @@
+⍝ ZBus.Nats request/reply benchmarks for Dyalog APL
+⍝ Requires nats-server running on localhost:4222
+
+⎕IO ⎕ML←1
+
+elapsed_s←{⎕FR←1287 ⋄ (⍵-⍺)÷1e9}
+
+dll←'D:\devel\Z-Format\src\ZBus.Nats\bin\Release\net10.0\win-x64\publish\ZBus.Nats.dll'
+
+'zbus_init'         ⎕NA 'I4 ',dll,'|zbus_init <0T1 >Z'
+'zbus_wait'         ⎕NA 'I4 ',dll,'|zbus_wait& <0T1 I4 >Z >Z >Z'
+'zbus_close'        ⎕NA 'I4 ',dll,'|zbus_close <0T1'
+'nats_connect'      ⎕NA 'I4 ',dll,'|zbus_nats_connect <0T1 <0T1'
+'nats_pub'          ⎕NA 'I4 ',dll,'|zbus_nats_pub <0T1 <0T1 <Z'
+'nats_sub'          ⎕NA 'I4 ',dll,'|zbus_nats_sub <0T1 <0T1 =Z'
+'nats_request'      ⎕NA 'I4 ',dll,'|zbus_nats_request <0T1 <0T1 <0T1 I4 =Z'
+
+fail←{⎕←⍵ ⋄ ⎕OFF 1}
+payload_eq←{expected←⍺ ⋄ actual←⍵ ⋄ (actual≡expected)∨((⎕UCS actual)≡expected)}
+msg_payload←{3⊃⍵}
+reply_to_of←{2⊃⍵}
+
+⎕←'════════════════════════════════════════════════════════════'
+⎕←' ZBus.Nats Request/Reply Benchmark'
+⎕←'════════════════════════════════════════════════════════════'
+⎕←''
+
+(rc rootName)←zbus_init 'REQ' 0
+:If rc≠0 ⋄ fail 'FATAL: zbus_init REQ failed rc=',⍕rc ⋄ :EndIf
+rc←nats_connect 'REQ' 'nats://localhost:4222'
+:If rc≠0 ⋄ fail 'FATAL: nats_connect REQ failed rc=',⍕rc ⋄ :EndIf
+(rc obj evt data)←zbus_wait 'REQ' 5000 0 0 0
+:If evt≢'Connected' ⋄ fail 'FATAL: REQ expected Connected got ',evt ⋄ :EndIf
+
+(rc rootName)←zbus_init 'SUB' 0
+:If rc≠0 ⋄ fail 'FATAL: zbus_init SUB failed rc=',⍕rc ⋄ :EndIf
+rc←nats_connect 'SUB' 'nats://localhost:4222'
+:If rc≠0 ⋄ fail 'FATAL: nats_connect SUB failed rc=',⍕rc ⋄ :EndIf
+(rc obj evt data)←zbus_wait 'SUB' 5000 0 0 0
+:If evt≢'Connected' ⋄ fail 'FATAL: SUB expected Connected got ',evt ⋄ :EndIf
+
+(rc svcSub)←nats_sub 'SUB' 'echoer' 'bench.reqrep'
+:If rc≠0 ⋄ fail 'FATAL: echo subscription failed rc=',⍕rc ⋄ :EndIf
+
+sizes←64 256 1024 4096
+counts←2000 2000 1000 500
+
+⎕←'mode  size_bytes  count  ops/s  avg_latency_us  elapsed_s'
+:For modeIndex :In 1 2
+    mode←'normal'
+    :If modeIndex=2
+        mode←'targeted'
+    :EndIf
+    :For idx :In ⍳≢sizes
+        payloadSize←idx⊃sizes
+        msgCount←idx⊃counts
+        payload←payloadSize⍴'R'
+        timeoutArg←5000
+        :If mode≡'targeted'
+            timeoutArg←¯5000
+        :EndIf
+
+        :For i :In ⍳100
+            (rc reqName)←nats_request 'REQ' '' 'bench.reqrep' timeoutArg payload
+            :If rc≠0 ⋄ fail 'WARMUP FAIL: nats_request rc=',⍕rc ⋄ :EndIf
+
+            (rc obj evt data)←zbus_wait 'SUB' 2000 0 0 0
+            :If rc≠0 ⋄ fail 'WARMUP FAIL: zbus_wait responder rc=',⍕rc ⋄ :EndIf
+            :If ~((evt≡'Msg')∨evt≡'Request') ⋄ fail 'WARMUP FAIL: expected Msg/Request got ',evt ⋄ :EndIf
+            :If ~(payload payload_eq msg_payload data) ⋄ fail 'WARMUP FAIL: request payload mismatch' ⋄ :EndIf
+            replyTo←reply_to_of data
+            :If 0=≢replyTo ⋄ fail 'WARMUP FAIL: empty reply-to' ⋄ :EndIf
+            rc←nats_pub 'SUB' replyTo payload
+            :If rc≠0 ⋄ fail 'WARMUP FAIL: reply publish rc=',⍕rc ⋄ :EndIf
+
+            :If mode≡'targeted'
+                (rc obj evt data)←zbus_wait reqName 2000 0 0 0
+            :Else
+                (rc obj evt data)←zbus_wait 'REQ' 2000 0 0 0
+            :EndIf
+            :If rc≠0 ⋄ fail 'WARMUP FAIL: reply wait rc=',⍕rc ⋄ :EndIf
+            :If evt≢'Reply' ⋄ fail 'WARMUP FAIL: expected Reply got ',evt ⋄ :EndIf
+            :If ~(payload payload_eq msg_payload data) ⋄ fail 'WARMUP FAIL: reply payload mismatch' ⋄ :EndIf
+        :EndFor
+
+        t0←16 ⎕DT 'Z'
+        :For i :In ⍳msgCount
+            (rc reqName)←nats_request 'REQ' '' 'bench.reqrep' timeoutArg payload
+            :If rc≠0 ⋄ fail 'TIMED FAIL: nats_request rc=',⍕rc ⋄ :EndIf
+
+            (rc obj evt data)←zbus_wait 'SUB' 5000 0 0 0
+            :If rc≠0 ⋄ fail 'TIMED FAIL: responder wait rc=',⍕rc ⋄ :EndIf
+            :If ~((evt≡'Msg')∨evt≡'Request') ⋄ fail 'TIMED FAIL: expected Msg/Request got ',evt ⋄ :EndIf
+            replyTo←reply_to_of data
+            :If 0=≢replyTo ⋄ fail 'TIMED FAIL: empty reply-to' ⋄ :EndIf
+            rc←nats_pub 'SUB' replyTo payload
+            :If rc≠0 ⋄ fail 'TIMED FAIL: reply publish rc=',⍕rc ⋄ :EndIf
+
+            :If mode≡'targeted'
+                (rc obj evt data)←zbus_wait reqName 5000 0 0 0
+            :Else
+                (rc obj evt data)←zbus_wait 'REQ' 5000 0 0 0
+            :EndIf
+            :If rc≠0 ⋄ fail 'TIMED FAIL: reply wait rc=',⍕rc ⋄ :EndIf
+            :If evt≢'Reply' ⋄ fail 'TIMED FAIL: expected Reply got ',evt ⋄ :EndIf
+        :EndFor
+        t1←16 ⎕DT 'Z'
+        elapsed←t0 elapsed_s t1
+
+        ⎕←mode,'  ',(⍕payloadSize),'  ',(⍕msgCount),'  ',(⍕⌊msgCount÷(elapsed⌈1e¯9)),'  ',(⍕1e6×elapsed÷msgCount),'  ',(⍕elapsed)
+    :EndFor
+:EndFor
+
+⎕←''
+rc←zbus_close ⊂'REQ'
+rc←zbus_close ⊂'SUB'
+⎕←'Benchmark complete'

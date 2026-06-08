@@ -1,0 +1,131 @@
+⍝ ZBus.Nats key/value benchmarks for Dyalog APL
+⍝ Requires nats-server -js running on localhost:4222
+
+⎕IO ⎕ML←1
+
+elapsed_s←{⎕FR←1287 ⋄ (⍵-⍺)÷1e9}
+
+dll←'D:\devel\Z-Format\src\ZBus.Nats\bin\Release\net10.0\win-x64\publish\ZBus.Nats.dll'
+
+'zbus_init'         ⎕NA 'I4 ',dll,'|zbus_init <0T1 >Z'
+'zbus_wait'         ⎕NA 'I4 ',dll,'|zbus_wait& <0T1 I4 >Z >Z >Z'
+'zbus_close'        ⎕NA 'I4 ',dll,'|zbus_close <0T1'
+'nats_connect'      ⎕NA 'I4 ',dll,'|zbus_nats_connect <0T1 <0T1'
+'nats_kv'           ⎕NA 'I4 ',dll,'|zbus_nats_kv <0T1 =Z'
+'nats_kv_get'       ⎕NA 'I4 ',dll,'|zbus_nats_kv_get <0T1 <0T1 >Z'
+'nats_kv_put'       ⎕NA 'I4 ',dll,'|zbus_nats_kv_put <0T1 <0T1 =Z'
+
+fail←{⎕←⍵ ⋄ ⎕OFF 1}
+payload_eq←{expected←⍺ ⋄ actual←⍵ ⋄ (actual≡expected)∨((⎕UCS actual)≡expected)}
+
+⎕←'════════════════════════════════════════════════════════════'
+⎕←' ZBus.Nats KV Benchmark'
+⎕←'════════════════════════════════════════════════════════════'
+⎕←''
+
+(rc rootName)←zbus_init 'KV' 0
+:If rc≠0 ⋄ fail 'FATAL: zbus_init KV failed rc=',⍕rc ⋄ :EndIf
+rc←nats_connect 'KV' 'nats://localhost:4222'
+:If rc≠0 ⋄ fail 'FATAL: nats_connect KV failed rc=',⍕rc ⋄ :EndIf
+(rc obj evt data)←zbus_wait 'KV' 5000 0 0 0
+:If evt≢'Connected' ⋄ fail 'FATAL: KV expected Connected got ',evt ⋄ :EndIf
+
+(rc bucketName)←nats_kv 'KV' 'bench-bucket'
+:If rc≠0 ⋄ fail 'FATAL: nats_kv failed rc=',⍕rc ⋄ :EndIf
+
+sizes←64 256 1024 4096
+putCounts←2000 2000 1000 500
+getCounts←5000 5000 2500 1000
+rtCounts←1000 1000 500 250
+
+⎕←'Put latency'
+⎕←'size_bytes  count  ops/s  avg_latency_us  elapsed_s'
+:For idx :In ⍳≢sizes
+    payloadSize←idx⊃sizes
+    opCount←idx⊃putCounts
+    payload←payloadSize⍴'K'
+
+    :For i :In ⍳100
+        key←'warm.put.',(⍕payloadSize),'.',(⍕i)
+        (rc rev)←nats_kv_put bucketName key payload
+        :If rc≠0 ⋄ fail 'WARMUP FAIL: nats_kv_put rc=',⍕rc ⋄ :EndIf
+        (rc getResult)←nats_kv_get bucketName key 0
+        :If rc≠0 ⋄ fail 'WARMUP FAIL: nats_kv_get rc=',⍕rc ⋄ :EndIf
+        :If ~(payload payload_eq 1⊃getResult) ⋄ fail 'WARMUP FAIL: value mismatch' ⋄ :EndIf
+    :EndFor
+
+    t0←16 ⎕DT 'Z'
+    :For i :In ⍳opCount
+        key←'bench.put.',(⍕payloadSize),'.',(⍕i)
+        (rc rev)←nats_kv_put bucketName key payload
+        :If rc≠0 ⋄ fail 'TIMED FAIL: nats_kv_put rc=',⍕rc ⋄ :EndIf
+    :EndFor
+    t1←16 ⎕DT 'Z'
+    elapsed←t0 elapsed_s t1
+
+    ⎕←(⍕payloadSize),'  ',(⍕opCount),'  ',(⍕⌊opCount÷(elapsed⌈1e¯9)),'  ',(⍕1e6×elapsed÷opCount),'  ',(⍕elapsed)
+:EndFor
+
+⎕←''
+⎕←'Get latency'
+⎕←'size_bytes  count  ops/s  avg_latency_us  elapsed_s'
+:For idx :In ⍳≢sizes
+    payloadSize←idx⊃sizes
+    opCount←idx⊃getCounts
+    payload←payloadSize⍴'G'
+    key←'bench.get.',⍕payloadSize
+
+    (rc rev)←nats_kv_put bucketName key payload
+    :If rc≠0 ⋄ fail 'SETUP FAIL: nats_kv_put rc=',⍕rc ⋄ :EndIf
+
+    :For i :In ⍳100
+        (rc getResult)←nats_kv_get bucketName key 0
+        :If rc≠0 ⋄ fail 'WARMUP FAIL: nats_kv_get rc=',⍕rc ⋄ :EndIf
+        :If ~(payload payload_eq 1⊃getResult) ⋄ fail 'WARMUP FAIL: value mismatch' ⋄ :EndIf
+    :EndFor
+
+    t0←16 ⎕DT 'Z'
+    :For i :In ⍳opCount
+        (rc gotValue)←nats_kv_get bucketName key 0
+        :If rc≠0 ⋄ fail 'TIMED FAIL: nats_kv_get rc=',⍕rc ⋄ :EndIf
+    :EndFor
+    t1←16 ⎕DT 'Z'
+    elapsed←t0 elapsed_s t1
+
+    ⎕←(⍕payloadSize),'  ',(⍕opCount),'  ',(⍕⌊opCount÷(elapsed⌈1e¯9)),'  ',(⍕1e6×elapsed÷opCount),'  ',(⍕elapsed)
+:EndFor
+
+⎕←''
+⎕←'Put + Get round-trip'
+⎕←'size_bytes  count  ops/s  avg_latency_us  elapsed_s'
+:For idx :In ⍳≢sizes
+    payloadSize←idx⊃sizes
+    opCount←idx⊃rtCounts
+    payload←payloadSize⍴'Q'
+
+    :For i :In ⍳50
+        key←'warm.rt.',(⍕payloadSize),'.',(⍕i)
+        (rc rev)←nats_kv_put bucketName key payload
+        :If rc≠0 ⋄ fail 'WARMUP FAIL: nats_kv_put rc=',⍕rc ⋄ :EndIf
+        (rc getResult)←nats_kv_get bucketName key 0
+        :If rc≠0 ⋄ fail 'WARMUP FAIL: nats_kv_get rc=',⍕rc ⋄ :EndIf
+        :If ~(payload payload_eq 1⊃getResult) ⋄ fail 'WARMUP FAIL: value mismatch' ⋄ :EndIf
+    :EndFor
+
+    t0←16 ⎕DT 'Z'
+    :For i :In ⍳opCount
+        key←'bench.rt.',(⍕payloadSize),'.',(⍕i)
+        (rc rev)←nats_kv_put bucketName key payload
+        :If rc≠0 ⋄ fail 'TIMED FAIL: nats_kv_put rc=',⍕rc ⋄ :EndIf
+        (rc gotValue)←nats_kv_get bucketName key 0
+        :If rc≠0 ⋄ fail 'TIMED FAIL: nats_kv_get rc=',⍕rc ⋄ :EndIf
+    :EndFor
+    t1←16 ⎕DT 'Z'
+    elapsed←t0 elapsed_s t1
+
+    ⎕←(⍕payloadSize),'  ',(⍕opCount),'  ',(⍕⌊opCount÷(elapsed⌈1e¯9)),'  ',(⍕1e6×elapsed÷opCount),'  ',(⍕elapsed)
+:EndFor
+
+⎕←''
+rc←zbus_close ⊂'KV'
+⎕←'Benchmark complete'

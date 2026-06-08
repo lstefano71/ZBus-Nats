@@ -58,7 +58,16 @@ This follows the DRC.Describe pattern: root returns library metadata, children r
 | `zbus_nats_connect` | `I4 dll\|zbus_nats_connect <0T1 <0T1` | `rc←nats_connect 'N1' 'nats://localhost:4222'` |
 | `zbus_nats_pub` | `I4 dll\|zbus_nats_pub <0T1 <0T1 <Z` | `rc←nats_pub 'N1' 'subject' 'payload'` |
 | `zbus_nats_sub` | `I4 dll\|zbus_nats_sub <0T1 <0T1 =Z` | `(rc name)←nats_sub 'N1' 'prices' 'market.>'` |
-| `zbus_nats_request` | `I4 dll\|zbus_nats_request <0T1 <0T1 <0T1 =Z` | `(rc reqName)←nats_request 'N1' 'R1' 'svc.add' payload` |
+| `zbus_nats_request` | `I4 dll\|zbus_nats_request <0T1 <0T1 <0T1 I4 =Z` | `(rc reqName)←nats_request 'N1' 'R1' 'svc.add' 5000 payload` |
+
+**Targeted delivery (negative timeout):** Pass a negative timeout to force Reply/Timeout events
+to use targeted delivery (no bubbling). Use when you have concurrent waits at different
+hierarchy levels (e.g., one thread waits on root, another waits on a specific mailbox):
+```apl
+(rc reqName)←nats_request 'N1' 'R1' 'svc.add' ¯5000 payload   ⍝ targeted, 5s timeout
+(rc obj evt data)←zbus_wait 'N1.R1' 6000 0 0 0                ⍝ only gets this mailbox's reply
+```
+Default (positive timeout) uses general delivery — idiomatic for single event loops.
 
 ### JetStream
 

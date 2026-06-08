@@ -58,6 +58,17 @@ public sealed class NatsAdapter : IAdapter, IDisposable
     }
 
     /// <summary>
+    /// Post an event with targeted delivery (no bubbling). Used for request/reply
+    /// mailboxes when the caller opts in via negative timeout.
+    /// </summary>
+    private void SafePostTargeted(string objectName, string eventType, ZValue data)
+    {
+        if (_disposed) return;
+        try { _poster.PostTargeted(objectName, eventType, data); }
+        catch { /* swallow */ }
+    }
+
+    /// <summary>
     /// Fire-and-forget a Task, ensuring any unhandled exception is swallowed.
     /// Prevents NativeAOT FailFast on unobserved task exceptions.
     /// </summary>
@@ -196,7 +207,7 @@ public sealed class NatsAdapter : IAdapter, IDisposable
     /// The reply arrives as a "Reply" event on the mailbox object.
     /// Timeout → "Timeout" event. Auto-closes after one reply.
     /// </summary>
-    public string Request(string rootName, string leafName, string subject, byte[] payload, NatsHeaders? headers, int timeoutMs)
+    public string Request(string rootName, string leafName, string subject, byte[] payload, NatsHeaders? headers, int timeoutMs, bool targeted = false)
     {
         if (_connection == null)
             return "";
@@ -213,11 +224,11 @@ public sealed class NatsAdapter : IAdapter, IDisposable
         var cts = new CancellationTokenSource();
         _subscriptions[fullName] = cts;
 
-        FireAndForget(RequestLoop(fullName, subject, payload, headers, timeoutMs, cts.Token));
+        FireAndForget(RequestLoop(fullName, subject, payload, headers, timeoutMs, targeted, cts.Token));
         return fullName;
     }
 
-    private async Task RequestLoop(string objectName, string subject, byte[] payload, NatsHeaders? headers, int timeoutMs, CancellationToken ct)
+    private async Task RequestLoop(string objectName, string subject, byte[] payload, NatsHeaders? headers, int timeoutMs, bool targeted, CancellationToken ct)
     {
         try
         {
@@ -234,17 +245,28 @@ public sealed class NatsAdapter : IAdapter, IDisposable
                 reply.Data != null ? ZValue.FromBytes(reply.Data) : ZValue.EmptyNumeric,
                 headersValue
             );
-            SafePost(objectName, "Reply", data);
+            if (targeted)
+                SafePostTargeted(objectName, "Reply", data);
+            else
+                SafePost(objectName, "Reply", data);
         }
         catch (OperationCanceledException)
         {
             if (!ct.IsCancellationRequested)
-                SafePost(objectName, "Timeout", ZValue.EmptyNumeric);
+            {
+                if (targeted)
+                    SafePostTargeted(objectName, "Timeout", ZValue.EmptyNumeric);
+                else
+                    SafePost(objectName, "Timeout", ZValue.EmptyNumeric);
+            }
         }
         catch (Exception ex) when (ex.GetType().Name.Contains("NoResponders") ||
                                     ex.Message.Contains("no responders", StringComparison.OrdinalIgnoreCase))
         {
-            SafePost(objectName, "Timeout", ZValue.EmptyNumeric);
+            if (targeted)
+                SafePostTargeted(objectName, "Timeout", ZValue.EmptyNumeric);
+            else
+                SafePost(objectName, "Timeout", ZValue.EmptyNumeric);
         }
         catch (Exception ex)
         {

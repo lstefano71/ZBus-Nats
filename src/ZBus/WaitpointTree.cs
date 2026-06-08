@@ -37,12 +37,12 @@ internal sealed class WaitpointTree : IDisposable
 
     /// <summary>
     /// Post an event with general delivery.
-    /// Finds the deepest waitpoint with an active waiter, bubbling up from targetName.
-    /// If no active waiter, queues at the target.
+    /// If there's an active waiter at the target or any ancestor, deliver directly.
+    /// Otherwise, buffer at the target waitpoint (never at root — root scans children).
     /// </summary>
     public void PostGeneral(string targetName, BusEvent evt)
     {
-        // Walk from target up to root, looking for active waiter
+        // Walk from target up to root, looking for active waiter (immediate delivery)
         var current = targetName;
         while (true)
         {
@@ -58,27 +58,88 @@ internal sealed class WaitpointTree : IDisposable
             current = current[..dotIdx];
         }
 
-        // No active waiter found anywhere — queue at root (always exists).
-        // This ensures events bubble up and are picked up by the next Wait on root.
-        _waitpoints[_rootName].Post(evt);
-    }
-
-    /// <summary>
-    /// Post an event with targeted delivery.
-    /// Only visible to exact-match waitpoint. Never bubbles.
-    /// </summary>
-    public void PostTargeted(string targetName, BusEvent evt)
-    {
+        // No active waiter anywhere — buffer at target.
+        // Root Wait will find it by scanning children.
         GetOrCreate(targetName).Post(evt);
     }
 
     /// <summary>
+    /// Post an event with targeted delivery.
+    /// Only visible to exact-match waitpoint. Never bubbles. Never found by ancestor scans.
+    /// </summary>
+    public void PostTargeted(string targetName, BusEvent evt)
+    {
+        GetOrCreate(targetName).PostTargeted(evt);
+    }
+
+    /// <summary>
     /// Block waiting for an event at the given name.
+    /// Leaf wait: reads from own channels (targeted + general).
+    /// Ancestor wait: reads from own channels + scans descendant general channels.
     /// </summary>
     public BusEvent? Wait(string name, int timeoutMs)
     {
         var wp = GetOrCreate(name);
-        return wp.TryReceive(timeoutMs);
+
+        // Fast path: check own waitpoint (targeted + general)
+        var fast = wp.TryReceive(0);
+        if (fast != null)
+            return fast;
+
+        // Check descendants for buffered general events
+        var fromChild = TryDrainOneDescendant(name);
+        if (fromChild != null)
+            return fromChild;
+
+        // Slow path: block on own channels with timeout, periodically scanning descendants
+        return WaitWithDescendantScan(name, wp, timeoutMs);
+    }
+
+    /// <summary>
+    /// Scan descendant waitpoints for a buffered general event.
+    /// Targeted events are invisible to ancestor scans.
+    /// Returns the first found, or null if none.
+    /// </summary>
+    private BusEvent? TryDrainOneDescendant(string ancestorName)
+    {
+        var prefix = ancestorName + ".";
+        foreach (var kvp in _waitpoints)
+        {
+            if (kvp.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                if (kvp.Value.TryReadOneGeneral() is { } evt)
+                    return evt;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Block on own channel, periodically waking to scan descendants.
+    /// Uses short poll intervals to balance latency vs CPU.
+    /// </summary>
+    private BusEvent? WaitWithDescendantScan(string name, Waitpoint wp, int timeoutMs)
+    {
+        const int pollIntervalMs = 5;
+        int elapsed = 0;
+
+        while (elapsed < timeoutMs || timeoutMs == -1)
+        {
+            int slice = timeoutMs == -1
+                ? pollIntervalMs
+                : Math.Min(pollIntervalMs, timeoutMs - elapsed);
+
+            var evt = wp.TryReceive(slice);
+            if (evt != null) return evt;
+
+            // Check descendants
+            var fromChild = TryDrainOneDescendant(name);
+            if (fromChild != null) return fromChild;
+
+            elapsed += slice;
+        }
+
+        return null;
     }
 
     public void Dispose()

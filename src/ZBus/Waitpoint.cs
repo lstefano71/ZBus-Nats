@@ -5,11 +5,13 @@ namespace ZBus;
 
 /// <summary>
 /// A waitpoint is a named event queue that supports blocking dequeue with timeout.
-/// Uses Channel&lt;BusEvent&gt; internally (same pattern as Conga-Sharp CommandMailbox).
+/// Uses two channels: one for general events (visible to ancestor scans) and
+/// one for targeted events (exact-match only, never scanned by ancestors).
 /// </summary>
 internal sealed class Waitpoint : IDisposable
 {
-    private readonly Channel<BusEvent> _channel;
+    private readonly Channel<BusEvent> _generalChannel;
+    private readonly Channel<BusEvent> _targetedChannel;
     private volatile bool _disposed;
     private volatile bool _hasActiveWaiter;
 
@@ -19,38 +21,62 @@ internal sealed class Waitpoint : IDisposable
     public Waitpoint(int maxQueueDepth = 1024)
     {
         MaxQueueDepth = maxQueueDepth;
-        _channel = Channel.CreateBounded<BusEvent>(new BoundedChannelOptions(maxQueueDepth)
+        var opts = new BoundedChannelOptions(maxQueueDepth)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = false,
             SingleWriter = false
-        });
+        };
+        _generalChannel = Channel.CreateBounded<BusEvent>(opts);
+        _targetedChannel = Channel.CreateBounded<BusEvent>(opts);
     }
 
     /// <summary>True if a thread is currently blocked inside TryReceive.</summary>
     public bool HasActiveWaiter => _hasActiveWaiter;
 
     /// <summary>
-    /// Enqueue an event. Non-blocking. Returns false if disposed.
-    /// Uses DropOldest on overflow (bounded channel handles this).
+    /// Enqueue a general event. Non-blocking. Returns false if disposed.
     /// </summary>
     public bool Post(BusEvent evt)
     {
         if (_disposed) return false;
-        return _channel.Writer.TryWrite(evt);
+        return _generalChannel.Writer.TryWrite(evt);
     }
 
     /// <summary>
-    /// Block until an event is available or timeout expires.
+    /// Enqueue a targeted event. Non-blocking. Returns false if disposed.
+    /// Targeted events are only visible to exact-match Wait, never to ancestor scans.
+    /// </summary>
+    public bool PostTargeted(BusEvent evt)
+    {
+        if (_disposed) return false;
+        return _targetedChannel.Writer.TryWrite(evt);
+    }
+
+    /// <summary>
+    /// Non-blocking read of a single buffered general event.
+    /// Does NOT set HasActiveWaiter. Used by ancestor descendant scans.
+    /// </summary>
+    public BusEvent? TryReadOneGeneral()
+    {
+        if (_disposed) return null;
+        return _generalChannel.Reader.TryRead(out var evt) ? evt : null;
+    }
+
+    /// <summary>
+    /// Block until an event is available (from either channel) or timeout expires.
+    /// Checks targeted first (higher priority), then general.
     /// Returns null on timeout.
     /// </summary>
     public BusEvent? TryReceive(int timeoutMs)
     {
         if (_disposed) return null;
 
-        // Fast path: event already buffered
-        if (_channel.Reader.TryRead(out var immediate))
-            return immediate;
+        // Fast path: check targeted first, then general
+        if (_targetedChannel.Reader.TryRead(out var targeted))
+            return targeted;
+        if (_generalChannel.Reader.TryRead(out var general))
+            return general;
 
         // Slow path: wait with timeout
         _hasActiveWaiter = true;
@@ -70,19 +96,30 @@ internal sealed class Waitpoint : IDisposable
 
             while (true)
             {
-                if (_channel.Reader.TryRead(out var evt))
-                    return evt;
+                // Check both channels
+                if (_targetedChannel.Reader.TryRead(out var t))
+                    return t;
+                if (_generalChannel.Reader.TryRead(out var g))
+                    return g;
 
-                var waitTask = _channel.Reader.WaitToReadAsync(token);
-                if (waitTask.IsCompletedSuccessfully)
-                {
-                    if (!waitTask.Result) return null; // channel completed
+                // Wait on both — whichever signals first
+                var targetedWait = _targetedChannel.Reader.WaitToReadAsync(token);
+                var generalWait = _generalChannel.Reader.WaitToReadAsync(token);
+
+                // If either is synchronously ready, loop back
+                if (targetedWait.IsCompletedSuccessfully && targetedWait.Result)
                     continue;
-                }
+                if (generalWait.IsCompletedSuccessfully && generalWait.Result)
+                    continue;
+                if (targetedWait.IsCompletedSuccessfully && !targetedWait.Result &&
+                    generalWait.IsCompletedSuccessfully && !generalWait.Result)
+                    return null; // both channels completed
 
-                // Must block
-                if (!waitTask.AsTask().GetAwaiter().GetResult())
-                    return null;
+                // Block until either channel has data
+                var tTask = targetedWait.IsCompleted ? Task.FromResult(targetedWait.Result) : targetedWait.AsTask();
+                var gTask = generalWait.IsCompleted ? Task.FromResult(generalWait.Result) : generalWait.AsTask();
+                Task.WhenAny(tTask, gTask).GetAwaiter().GetResult();
+                // Loop back to TryRead
             }
         }
         catch (OperationCanceledException)
@@ -100,13 +137,20 @@ internal sealed class Waitpoint : IDisposable
         }
     }
 
-    /// <summary>Number of events currently buffered.</summary>
-    public int Count => _channel.Reader.Count;
+    /// <summary>Number of general events currently buffered.</summary>
+    public int GeneralCount => _generalChannel.Reader.Count;
+
+    /// <summary>Number of targeted events currently buffered.</summary>
+    public int TargetedCount => _targetedChannel.Reader.Count;
+
+    /// <summary>Total events buffered.</summary>
+    public int Count => GeneralCount + TargetedCount;
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        _channel.Writer.TryComplete();
+        _generalChannel.Writer.TryComplete();
+        _targetedChannel.Writer.TryComplete();
     }
 }

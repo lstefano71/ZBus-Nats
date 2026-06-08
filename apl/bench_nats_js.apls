@@ -1,0 +1,179 @@
+⍝ ZBus.Nats JetStream benchmarks for Dyalog APL
+⍝ Requires nats-server -js running on localhost:4222
+
+⎕IO ⎕ML←1
+
+elapsed_s←{⎕FR←1287 ⋄ (⍵-⍺)÷1e9}
+
+dll←'D:\devel\Z-Format\src\ZBus.Nats\bin\Release\net10.0\win-x64\publish\ZBus.Nats.dll'
+
+'zbus_init'         ⎕NA 'I4 ',dll,'|zbus_init <0T1 >Z'
+'zbus_wait'         ⎕NA 'I4 ',dll,'|zbus_wait& <0T1 I4 >Z >Z >Z'
+'zbus_close'        ⎕NA 'I4 ',dll,'|zbus_close <0T1'
+'nats_connect'      ⎕NA 'I4 ',dll,'|zbus_nats_connect <0T1 <0T1'
+'nats_stream'       ⎕NA 'I4 ',dll,'|zbus_nats_stream <0T1 <0T1 =Z'
+'nats_jspub'        ⎕NA 'I4 ',dll,'|zbus_nats_jspub <0T1 <0T1 =Z'
+'nats_consumer'     ⎕NA 'I4 ',dll,'|zbus_nats_consumer <0T1 <0T1 <0T1 =Z'
+'nats_ack'          ⎕NA 'I4 ',dll,'|zbus_nats_ack <0T1 I4'
+
+fail←{⎕←⍵ ⋄ ⎕OFF 1}
+payload_eq←{expected←⍺ ⋄ actual←⍵ ⋄ (actual≡expected)∨((⎕UCS actual)≡expected)}
+js_payload←{2⊃⍵}
+js_seq←{⊃⌽⍵}
+
+⎕←'════════════════════════════════════════════════════════════'
+⎕←' ZBus.Nats JetStream Benchmark'
+⎕←'════════════════════════════════════════════════════════════'
+⎕←''
+
+(rc rootName)←zbus_init 'JS' 0
+:If rc≠0 ⋄ fail 'FATAL: zbus_init JS failed rc=',⍕rc ⋄ :EndIf
+rc←nats_connect 'JS' 'nats://localhost:4222'
+:If rc≠0 ⋄ fail 'FATAL: nats_connect JS failed rc=',⍕rc ⋄ :EndIf
+(rc obj evt data)←zbus_wait 'JS' 5000 0 0 0
+:If evt≢'Connected' ⋄ fail 'FATAL: JS expected Connected got ',evt ⋄ :EndIf
+
+streamId←'BENCHJS'
+(rc streamName)←nats_stream 'JS' streamId 'bench.js.>'
+:If rc≠0 ⋄ fail 'FATAL: nats_stream failed rc=',⍕rc ⋄ :EndIf
+
+sizes←64 256 1024 4096
+pubCounts←2000 2000 1000 500
+consumeCounts←1000 1000 500 250
+ackCounts←1000 1000 500 250
+
+⎕←'JetStream publish with ack'
+⎕←'size_bytes  count  ops/s  avg_latency_us  elapsed_s'
+:For idx :In ⍳≢sizes
+    payloadSize←idx⊃sizes
+    opCount←idx⊃pubCounts
+    payload←payloadSize⍴'J'
+    (rc consumerName)←nats_consumer streamName ('pub',⍕payloadSize) '' 'new'
+    :If rc≠0 ⋄ fail 'FATAL: nats_consumer failed rc=',⍕rc ⋄ :EndIf
+
+    :For i :In ⍳50
+        (rc ack)←nats_jspub 'JS' 'bench.js.pub' payload
+        :If rc≠0 ⋄ fail 'WARMUP FAIL: nats_jspub rc=',⍕rc ⋄ :EndIf
+        (rc obj evt data)←zbus_wait 'JS' 5000 0 0 0
+        :If rc≠0 ⋄ fail 'WARMUP FAIL: zbus_wait rc=',⍕rc ⋄ :EndIf
+        :If evt≢'JsMsg' ⋄ fail 'WARMUP FAIL: expected JsMsg got ',evt ⋄ :EndIf
+        :If ~(payload payload_eq js_payload data) ⋄ fail 'WARMUP FAIL: payload mismatch' ⋄ :EndIf
+        rc←nats_ack consumerName (js_seq data)
+        :If rc≠0 ⋄ fail 'WARMUP FAIL: nats_ack rc=',⍕rc ⋄ :EndIf
+    :EndFor
+
+    t0←16 ⎕DT 'Z'
+    :For i :In ⍳opCount
+        (rc ack)←nats_jspub 'JS' 'bench.js.pub' payload
+        :If rc≠0 ⋄ fail 'TIMED FAIL: nats_jspub rc=',⍕rc ⋄ :EndIf
+    :EndFor
+    t1←16 ⎕DT 'Z'
+    elapsed←t0 elapsed_s t1
+    ⎕←(⍕payloadSize),'  ',(⍕opCount),'  ',(⍕⌊opCount÷elapsed⌈1e¯9),'  ',(⍕1e6×elapsed÷opCount),'  ',(⍕elapsed)
+
+    :For i :In ⍳opCount
+        (rc obj evt data)←zbus_wait 'JS' 10000 0 0 0
+        :If rc≠0 ⋄ fail 'DRAIN FAIL: zbus_wait rc=',⍕rc ⋄ :EndIf
+        :If evt≢'JsMsg' ⋄ fail 'DRAIN FAIL: expected JsMsg got ',evt ⋄ :EndIf
+        rc←nats_ack consumerName (js_seq data)
+        :If rc≠0 ⋄ fail 'DRAIN FAIL: nats_ack rc=',⍕rc ⋄ :EndIf
+    :EndFor
+
+    rc←zbus_close ⊂consumerName
+    (rc obj evt data)←zbus_wait 'JS' 1000 0 0 0
+:EndFor
+
+⎕←''
+⎕←'Consumer consume latency (publish → JsMsg)'
+⎕←'size_bytes  count  ops/s  avg_latency_us  elapsed_s'
+:For idx :In ⍳≢sizes
+    payloadSize←idx⊃sizes
+    opCount←idx⊃consumeCounts
+    payload←payloadSize⍴'C'
+    (rc consumerName)←nats_consumer streamName ('consume',⍕payloadSize) '' 'new'
+    :If rc≠0 ⋄ fail 'FATAL: nats_consumer failed rc=',⍕rc ⋄ :EndIf
+    seqs←opCount⍴0
+
+    :For i :In ⍳25
+        (rc ack)←nats_jspub 'JS' 'bench.js.consume' payload
+        :If rc≠0 ⋄ fail 'WARMUP FAIL: nats_jspub rc=',⍕rc ⋄ :EndIf
+        ackSeq←2⊃ack
+        (rc obj evt data)←zbus_wait 'JS' 5000 0 0 0
+        :If rc≠0 ⋄ fail 'WARMUP FAIL: zbus_wait rc=',⍕rc ⋄ :EndIf
+        :If evt≢'JsMsg' ⋄ fail 'WARMUP FAIL: expected JsMsg got ',evt ⋄ :EndIf
+        :If ~(payload payload_eq js_payload data) ⋄ fail 'WARMUP FAIL: payload mismatch' ⋄ :EndIf
+        rc←nats_ack consumerName (js_seq data)
+        :If rc≠0 ⋄ fail 'WARMUP FAIL: nats_ack rc=',⍕rc ⋄ :EndIf
+    :EndFor
+
+    t0←16 ⎕DT 'Z'
+    :For i :In ⍳opCount
+        (rc ack)←nats_jspub 'JS' 'bench.js.consume' payload
+        :If rc≠0 ⋄ fail 'TIMED FAIL: nats_jspub rc=',⍕rc ⋄ :EndIf
+        (rc obj evt data)←zbus_wait 'JS' 5000 0 0 0
+        :If rc≠0 ⋄ fail 'TIMED FAIL: zbus_wait rc=',⍕rc ⋄ :EndIf
+        :If evt≢'JsMsg' ⋄ fail 'TIMED FAIL: expected JsMsg got ',evt ⋄ :EndIf
+        seqs[i]←js_seq data
+    :EndFor
+    t1←16 ⎕DT 'Z'
+    elapsed←t0 elapsed_s t1
+    ⎕←(⍕payloadSize),'  ',(⍕opCount),'  ',(⍕⌊opCount÷elapsed⌈1e¯9),'  ',(⍕1e6×elapsed÷opCount),'  ',(⍕elapsed)
+
+    :For i :In ⍳opCount
+        rc←nats_ack consumerName (i⊃seqs)
+        :If rc≠0 ⋄ fail 'POST FAIL: nats_ack rc=',⍕rc ⋄ :EndIf
+    :EndFor
+
+    rc←zbus_close ⊂consumerName
+    (rc obj evt data)←zbus_wait 'JS' 1000 0 0 0
+:EndFor
+
+⎕←''
+⎕←'Ack latency'
+⎕←'size_bytes  count  ops/s  avg_latency_us  elapsed_s'
+:For idx :In ⍳≢sizes
+    payloadSize←idx⊃sizes
+    opCount←idx⊃ackCounts
+    payload←payloadSize⍴'A'
+    (rc consumerName)←nats_consumer streamName ('ack',⍕payloadSize) '' 'new'
+    :If rc≠0 ⋄ fail 'FATAL: nats_consumer failed rc=',⍕rc ⋄ :EndIf
+    seqs←opCount⍴0
+
+    :For i :In ⍳25
+        (rc ack)←nats_jspub 'JS' 'bench.js.ack' payload
+        :If rc≠0 ⋄ fail 'WARMUP FAIL: nats_jspub rc=',⍕rc ⋄ :EndIf
+        ackSeq←2⊃ack
+        (rc obj evt data)←zbus_wait 'JS' 5000 0 0 0
+        :If rc≠0 ⋄ fail 'WARMUP FAIL: zbus_wait rc=',⍕rc ⋄ :EndIf
+        :If evt≢'JsMsg' ⋄ fail 'WARMUP FAIL: expected JsMsg got ',evt ⋄ :EndIf
+        :If ~(payload payload_eq js_payload data) ⋄ fail 'WARMUP FAIL: payload mismatch' ⋄ :EndIf
+        rc←nats_ack consumerName (js_seq data)
+        :If rc≠0 ⋄ fail 'WARMUP FAIL: nats_ack rc=',⍕rc ⋄ :EndIf
+    :EndFor
+
+    :For i :In ⍳opCount
+        (rc ack)←nats_jspub 'JS' 'bench.js.ack' payload
+        :If rc≠0 ⋄ fail 'SETUP FAIL: nats_jspub rc=',⍕rc ⋄ :EndIf
+    :EndFor
+    :For i :In ⍳opCount
+        (rc obj evt data)←zbus_wait 'JS' 5000 0 0 0
+        :If rc≠0 ⋄ fail 'SETUP FAIL: zbus_wait rc=',⍕rc ⋄ :EndIf
+        :If evt≢'JsMsg' ⋄ fail 'SETUP FAIL: expected JsMsg got ',evt ⋄ :EndIf
+        seqs[i]←js_seq data
+    :EndFor
+
+    t0←16 ⎕DT 'Z'
+    :For i :In ⍳opCount
+        rc←nats_ack consumerName (i⊃seqs)
+        :If rc≠0 ⋄ fail 'TIMED FAIL: nats_ack rc=',⍕rc ⋄ :EndIf
+    :EndFor
+    t1←16 ⎕DT 'Z'
+    elapsed←t0 elapsed_s t1
+    ⎕←(⍕payloadSize),'  ',(⍕opCount),'  ',(⍕⌊opCount÷elapsed⌈1e¯9),'  ',(⍕1e6×elapsed÷opCount),'  ',(⍕elapsed)
+    rc←zbus_close ⊂consumerName
+    (rc obj evt data)←zbus_wait 'JS' 1000 0 0 0
+:EndFor
+
+⎕←''
+rc←zbus_close ⊂'JS'
+⎕←'Benchmark complete'
