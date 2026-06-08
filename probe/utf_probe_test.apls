@@ -1,0 +1,46 @@
+⍝ UTF Probe Test: demonstrates T1 vs UTF8 vs T2 differences
+⍝ This script passes the same string through different ⎕NA type declarations
+⍝ and logs what the C function actually receives.
+
+dll←'D:\devel\Z-Format\probe\utf_probe'
+
+⍝ Delete old log (ignore if doesn't exist)
+:Trap 0
+    ⎕NDELETE (2 ⎕NQ '.' 'GetEnvironment' 'TEMP'),'\utf_probe_log.txt'
+:EndTrap
+
+⍝ === Test 1: T1 (raw bytes, no encoding) ===
+⍝ T1[] means null-terminated 1-byte char array
+'pt1' ⎕NA dll,'|probe_t1 <0T1[] I'
+⍝ 'café' has 'é' = U+00E9
+s←'café'
+pt1 s (≢s)
+⎕←'T1 test done: ',⍕≢s,' chars sent'
+
+⍝ === Test 2: UTF8 (interpreter encodes to UTF-8) ===
+'putf8' ⎕NA dll,'|probe_utf8 <0UTF8[] I'
+putf8 s (4+1)  ⍝ UTF-8 encodes 'é' as 2 bytes → 5 bytes total + null
+⎕←'UTF8 test done'
+
+⍝ === Test 3: T2 (raw 16-bit codepoints, Windows wchar_t) ===
+'pt2' ⎕NA dll,'|probe_t2 <0T2[] I'
+pt2 s (≢s)
+⎕←'T2 test done'
+
+⍝ === Test 4: UTF8 with multi-byte characters ===
+⍝ '日本語' = U+65E5 U+672C U+8A9E (3 chars, 9 bytes in UTF-8)
+s2←'日本語'
+putf8 s2 (9)
+⎕←'UTF8 CJK test done: ',⍕≢s2,' chars → 9 UTF-8 bytes'
+
+⍝ === Test 5: T1 with high codepoints (DOMAIN ERROR!) ===
+⍝ T1 cannot pass characters with codepoints > 255
+:Trap 11  ⍝ DOMAIN ERROR
+    pt1 s2 (≢s2)
+    ⎕←'T1 CJK: unexpectedly succeeded'
+:Else
+    ⎕←'T1 CJK: DOMAIN ERROR (as expected — T1 rejects codepoints > 255)'
+:EndTrap
+
+⎕←''
+⎕←'Check log: %TEMP%\utf_probe_log.txt'
