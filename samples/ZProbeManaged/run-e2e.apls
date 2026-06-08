@@ -107,5 +107,76 @@ deepBox2Round Check deepBox2
 roundTripNested←zecho ⊂expectedNested
 roundTripNested Check expectedNested
 
+⍝ ═══════════════════════════════════════════════════════════════
+⍝ Empty nested arrays with prototypes
+⍝ ═══════════════════════════════════════════════════════════════
+
+'zenc'  ⎕NA dll,'|z_empty_nested_char >Z'
+'zenn'  ⎕NA dll,'|z_empty_nested_num >Z'
+'zenx'  ⎕NA dll,'|z_empty_nested_complex >Z'
+'zen2d' ⎕NA dll,'|z_empty_nested_2d >Z'
+
+⎕←'--- z_empty_nested_char (0⍴⊂'''') ---'
+enc←zenc 0
+(0⍴⊂'') Check enc
+⍝ Verify prototype survives: 1↑ reveals fill element
+(⊃1↑enc) Check ''
+
+⎕←'--- z_empty_nested_num (0⍴⊂⍬) ---'
+enn←zenn 0
+(0⍴⊂⍬) Check enn
+(⊃1↑enn) Check ⍬
+
+⎕←'--- z_empty_nested_complex (0⍴⊂(''    '' 0)) ---'
+enx←zenx 0
+(0⍴⊂('    ' 0)) Check enx
+⍝ Verify nested prototype structure
+p←⊃1↑enx
+('    ' 0) Check p
+
+⎕←'--- z_empty_nested_2d ((0 3)⍴⊂'''') ---'
+en2d←zen2d 0
+((0 3)⍴⊂'') Check en2d
+(0 3) Check ⍴en2d
+
+⎕←'--- z_echo round-trip of empty nested ---'
+⍝ Echo: APL sends 0⍴⊂'' → DLL reads (with prototype) → writes back → APL receives
+echoEmpty←zecho ⊂0⍴⊂''
+(0⍴⊂'') Check echoEmpty
+(⊃1↑echoEmpty) Check ''
+
+⍝ Echo complex empty nested
+echoComplex←zecho ⊂0⍴⊂('hello' 99)
+(0⍴⊂('hello' 99)) Check echoComplex
+
+⍝ Echo 2D empty nested
+echo2d←zecho ⊂(0 3)⍴⊂''
+((0 3)⍴⊂'') Check echo2d
+
+⍝ ═══════════════════════════════════════════════════════════════
+⍝ ZView echo (zero-copy read path)
+⍝ ═══════════════════════════════════════════════════════════════
+
+'zechoview' ⎕NA dll,'|z_echo_view =Z'
+
+⎕←'--- z_echo_view: scalar ---'
+(42) Check zechoview ⊂42
+
+⎕←'--- z_echo_view: string ---'
+expectedCafe Check zechoview ⊂expectedCafe
+
+⎕←'--- z_echo_view: nested ---'
+expectedNested Check zechoview ⊂expectedNested
+
+⎕←'--- z_echo_view: deep nested ---'
+deep Check zechoview ⊂deep
+
+⎕←'--- z_echo_view: empty nested ---'
+(0⍴⊂'') Check zechoview ⊂0⍴⊂''
+(⊃1↑zechoview ⊂0⍴⊂'') Check ''
+
+⎕←'--- z_echo_view: matrix ---'
+expectedIntMatrix Check zechoview ⊂expectedIntMatrix
+
 ⎕FR←old_fr
 ⎕OFF 0

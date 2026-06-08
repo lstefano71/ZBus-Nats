@@ -18,6 +18,10 @@ using ZFormat;
 ///   'zchr'   ⎕NA dll,'|z_make_char_matrix >Z'
 ///   'zdecf'  ⎕NA dll,'|z_make_decf >Z'
 ///   'zdeep'  ⎕NA dll,'|z_make_deep_nested >Z'
+///   'zenc'   ⎕NA dll,'|z_empty_nested_char >Z'
+///   'zenn'   ⎕NA dll,'|z_empty_nested_num >Z'
+///   'zenx'   ⎕NA dll,'|z_empty_nested_complex >Z'
+///   'zen2d'  ⎕NA dll,'|z_empty_nested_2d >Z'
 ///   
 ///   zecho ⊂'hello'    ⍝ echoes back the input
 ///   zstr 0            ⍝ returns 'ZFormat works!'
@@ -45,6 +49,29 @@ public static unsafe class Exports
             var value = ZReader.Read(span);
 
             // Re-serialise and write to output
+            ZWriter.WriteToNative((nint)zParam, value);
+            return 0;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>
+    /// Echo using ZView (zero-copy read) → ToZValue → ZWriter.
+    /// Validates the ZView path produces identical results to ZReader.
+    /// </summary>
+    [UnmanagedCallersOnly(EntryPoint = "z_echo_view")]
+    public static int ZEchoView(nint* zParam)
+    {
+        try
+        {
+            // Zero-copy read via ZView
+            var view = ZView.FromNative((nint)zParam);
+            // Convert to owning ZValue (copies data)
+            var value = view.ToZValue();
+            // Write back
             ZWriter.WriteToNative((nint)zParam, value);
             return 0;
         }
@@ -207,6 +234,63 @@ public static unsafe class Exports
         {
             return -1;
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Empty nested arrays with prototypes
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>Produce 0⍴⊂'' — empty nested with char prototype.</summary>
+    [UnmanagedCallersOnly(EntryPoint = "z_empty_nested_char")]
+    public static int ZEmptyNestedChar(nint* zParam)
+    {
+        try
+        {
+            var value = ZValue.EmptyNested(ZValue.FromChars(""));
+            ZWriter.WriteToNative((nint)zParam, value);
+            return 0;
+        }
+        catch { return -1; }
+    }
+
+    /// <summary>Produce 0⍴⊂⍬ — empty nested with empty numeric prototype.</summary>
+    [UnmanagedCallersOnly(EntryPoint = "z_empty_nested_num")]
+    public static int ZEmptyNestedNum(nint* zParam)
+    {
+        try
+        {
+            var value = ZValue.EmptyNested(ZValue.FromInts([]));
+            ZWriter.WriteToNative((nint)zParam, value);
+            return 0;
+        }
+        catch { return -1; }
+    }
+
+    /// <summary>Produce 0⍴⊂('    ' 0) — empty nested with complex prototype.</summary>
+    [UnmanagedCallersOnly(EntryPoint = "z_empty_nested_complex")]
+    public static int ZEmptyNestedComplex(nint* zParam)
+    {
+        try
+        {
+            var proto = ZValue.Nested(ZValue.FromChars("    "), ZValue.FromInt(0));
+            var value = ZValue.EmptyNested(proto);
+            ZWriter.WriteToNative((nint)zParam, value);
+            return 0;
+        }
+        catch { return -1; }
+    }
+
+    /// <summary>Produce (0 3)⍴⊂'' — empty 2D nested with char prototype.</summary>
+    [UnmanagedCallersOnly(EntryPoint = "z_empty_nested_2d")]
+    public static int ZEmptyNested2D(nint* zParam)
+    {
+        try
+        {
+            var value = ZValue.EmptyNested([0, 3], ZValue.FromChars(""));
+            ZWriter.WriteToNative((nint)zParam, value);
+            return 0;
+        }
+        catch { return -1; }
     }
 
     /// <summary>
