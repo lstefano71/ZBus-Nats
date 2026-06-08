@@ -12,6 +12,12 @@ using ZFormat;
 ///   'zstr'   ⎕NA dll,'|z_make_string >Z'
 ///   'zint'   ⎕NA dll,'|z_make_int >Z'
 ///   'znest'  ⎕NA dll,'|z_make_nested >Z'
+///   'zbool'  ⎕NA dll,'|z_make_bool_matrix >Z'
+///   'zimat'  ⎕NA dll,'|z_make_int_matrix >Z'
+///   'zdbl'   ⎕NA dll,'|z_make_double_cube >Z'
+///   'zchr'   ⎕NA dll,'|z_make_char_matrix >Z'
+///   'zdecf'  ⎕NA dll,'|z_make_decf >Z'
+///   'zdeep'  ⎕NA dll,'|z_make_deep_nested >Z'
 ///   
 ///   zecho ⊂'hello'    ⍝ echoes back the input
 ///   zstr 0            ⍝ returns 'ZFormat works!'
@@ -89,6 +95,111 @@ public static unsafe class Exports
             var value = ZValue.Nested(
                 ZValue.FromIntSqueezed(0),
                 ZValue.FromString("OK"));
+            ZWriter.WriteToNative((nint)zParam, value);
+            return 0;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>Produce a 2x4 boolean matrix via >Z.</summary>
+    [UnmanagedCallersOnly(EntryPoint = "z_make_bool_matrix")]
+    public static int ZMakeBoolMatrix(nint* zParam)
+    {
+        try
+        {
+            var value = ZValue.FromBooleans([2, 4], [true, false, true, false, false, true, false, true]);
+            ZWriter.WriteToNative((nint)zParam, value);
+            return 0;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>Produce a 2x3 integer matrix via >Z.</summary>
+    [UnmanagedCallersOnly(EntryPoint = "z_make_int_matrix")]
+    public static int ZMakeIntMatrix(nint* zParam)
+    {
+        try
+        {
+            var value = ZValue.FromInt32Array([2, 3], [1, 2, 3, 4, 5, 6]);
+            ZWriter.WriteToNative((nint)zParam, value);
+            return 0;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>Produce a 2x2x2 double cube via >Z.</summary>
+    [UnmanagedCallersOnly(EntryPoint = "z_make_double_cube")]
+    public static int ZMakeDoubleCube(nint* zParam)
+    {
+        try
+        {
+            var value = ZValue.FromDoubleArray([2, 2, 2], [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5]);
+            ZWriter.WriteToNative((nint)zParam, value);
+            return 0;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>Produce a 2x4 Greek character matrix via >Z.</summary>
+    [UnmanagedCallersOnly(EntryPoint = "z_make_char_matrix")]
+    public static int ZMakeCharMatrix(nint* zParam)
+    {
+        try
+        {
+            var value = ZValue.FromCharArray([2, 4], "αβγδεζηθ");
+            ZWriter.WriteToNative((nint)zParam, value);
+            return 0;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>Produce an exact DECF scalar via >Z.</summary>
+    [UnmanagedCallersOnly(EntryPoint = "z_make_decf")]
+    public static int ZMakeDecf(nint* zParam)
+    {
+        try
+        {
+            var value = ZValue.FromDecfInt64(9007199254740993L);
+            ZWriter.WriteToNative((nint)zParam, value);
+            return 0;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>Produce a deeper nested structure via >Z.</summary>
+    [UnmanagedCallersOnly(EntryPoint = "z_make_deep_nested")]
+    public static int ZMakeDeepNested(nint* zParam)
+    {
+        try
+        {
+            var value = ZValue.Nested(
+                ZValue.FromIntSqueezed(0),
+                ZValue.Nested(
+                    ZValue.FromIntSqueezed(1),
+                    ZValue.FromString("A")),
+                ZValue.Nested(
+                    ZValue.FromIntSqueezed(2),
+                    ZValue.Nested(
+                        ZValue.FromIntSqueezed(3),
+                        ZValue.FromString("B"))));
             ZWriter.WriteToNative((nint)zParam, value);
             return 0;
         }

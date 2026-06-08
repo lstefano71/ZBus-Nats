@@ -1,7 +1,6 @@
 ⍝ End-to-end smoke test for the AOT sample DLL.
 ⍝ Assumes the current directory is samples\ZProbeManaged.
 
-
 ⍝ Debug flag: workspace check after every line (catches corruption)
 old_dflags←2 ⎕NQ '#' 'setdflags' 64
 ⎕←'dflags: 64'
@@ -12,6 +11,12 @@ dll←'ZProbeManaged\bin\Release\net10.0\win-x64\publish\ZProbeManaged'
 'zstr'  ⎕NA dll,'|z_make_string >Z'
 'zint'  ⎕NA dll,'|z_make_int >Z'
 'znest' ⎕NA dll,'|z_make_nested >Z'
+'zbool' ⎕NA dll,'|z_make_bool_matrix >Z'
+'zimat' ⎕NA dll,'|z_make_int_matrix >Z'
+'zdbl'  ⎕NA dll,'|z_make_double_cube >Z'
+'zchr'  ⎕NA dll,'|z_make_char_matrix >Z'
+'zdecf' ⎕NA dll,'|z_make_decf >Z'
+'zdeep' ⎕NA dll,'|z_make_deep_nested >Z'
 
 Check←{
     ⍺≡⍵: 0
@@ -20,11 +25,17 @@ Check←{
     ⎕OFF 1
 }
 
+old_fr←⎕FR
+
 expectedString←'ZFormat works!'
 expectedInt←42
 expectedNested←0 'OK'
 expectedCafe←'café'
 expectedEmoji←⎕UCS 128512
+expectedBool←2 4⍴1 0 1 0 0 1 0 1
+expectedIntMatrix←2 3⍴1 2 3 4 5 6
+expectedDoubleCube←2 2 2⍴1.5 2.5 3.5 4.5 5.5 6.5 7.5 8.5
+expectedCharMatrix←2 4⍴'αβγδεζηθ'
 
 ⎕←'--- z_make_string ---'
 str←zstr 0
@@ -38,6 +49,41 @@ int Check expectedInt
 nested←znest 0
 nested Check expectedNested
 
+⎕←'--- z_make_bool_matrix ---'
+boolM←zbool 0
+boolM Check expectedBool
+boolRound←zecho ⊂boolM
+boolRound Check boolM
+
+⎕←'--- z_make_int_matrix ---'
+intM←zimat 0
+intM Check expectedIntMatrix
+intRound←zecho ⊂intM
+intRound Check intM
+
+⎕←'--- z_make_double_cube ---'
+dblCube←zdbl 0
+dblCube Check expectedDoubleCube
+dblRound←zecho ⊂dblCube
+dblRound Check dblCube
+
+⎕←'--- z_make_char_matrix ---'
+charM←zchr 0
+charM Check expectedCharMatrix
+charRound←zecho ⊂charM
+charRound Check charM
+
+⎕←'--- z_make_decf ---'
+⎕FR←1287
+expectedDecf←9007199254740993
+decf←zdecf 0
+decf Check expectedDecf
+decfRound←zecho ⊂decf
+decfRound Check expectedDecf
+decfEcho←zecho ⊂expectedDecf
+decfEcho Check expectedDecf
+⎕FR←old_fr
+
 ⎕←'--- z_echo on café ---'
 cafe←zecho ⊂expectedCafe
 cafe Check expectedCafe
@@ -46,8 +92,20 @@ cafe Check expectedCafe
 emoji←zecho ⊂expectedEmoji
 emoji Check expectedEmoji
 
+⎕←'--- z_make_deep_nested ---'
+deep←zdeep 0
+deepBox1←⊂deep
+deepBox2←⊂deepBox1
+deepRound←zecho ⊂deep
+deepRound Check deep
+deepBox1Round←zecho ⊂deepBox1
+deepBox1Round Check deepBox1
+deepBox2Round←zecho ⊂deepBox2
+deepBox2Round Check deepBox2
+
 ⎕←'--- z_echo on nested ---'
 roundTripNested←zecho ⊂expectedNested
 roundTripNested Check expectedNested
 
+⎕FR←old_fr
 ⎕OFF 0
