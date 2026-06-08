@@ -67,3 +67,11 @@ _Avoid_: direct, pinned
 **Verb export**:
 An adapter-specific `[UnmanagedCallersOnly]` function exposed from the AOT DLL (e.g., `zbus_nats_subscribe`). Kernel exports are prefixed `zbus_`; adapter exports are prefixed `zbus_{adapterId}_`.
 _Avoid_: API, function, command
+
+**Shape-driven overload**:
+A `=Z` parameter whose meaning is determined by the Z value's structure at runtime: simple char vector for the common case, 2-element nested vector for one extra dimension, Nx2 nested matrix for a full options bag. Avoids verb proliferation.
+_Avoid_: polymorphic parameter, variant, union
+
+**Describe**:
+A kernel verb that returns a multi-element vector providing a textual description of a named object (type, state, adapter-specific metadata). One round-trip for full introspection. Inspired by Conga's `DRC.Describe`.
+_Avoid_: info, inspect, dump

@@ -21,6 +21,7 @@
 - C:\Users\stf\Source\Repos\Conga-Sharp\src\CongaSharp\ZWriter.cs
 - D:\devel\dwa\v20
 - C:\Users\stf\Source\Repos\bridge-dwa
+- D:\devel\nats\2.14.2\nats-server.exe  (local NATS server)
 
 
 ## Data types still needing support:
@@ -71,4 +72,3 @@ Every `>Z` output parameter needs a placeholder argument (typically `0`) in the 
 'fn' ⎕NA 'I4 dll|fn <0T1 >Z >Z >Z'
 (rc a b c) ← fn 'arg' 0 0 0   ⍝ three >Z → three 0 placeholders
 ```
-
