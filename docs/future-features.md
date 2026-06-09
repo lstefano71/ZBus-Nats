@@ -102,6 +102,34 @@ same `IAdapter` contract, ⎕NA export patterns, and event-loop idioms.
 | **Redis** | SE.Redis | 🔴 Not yet | Yes | Teams already running Redis |
 | **MQTT** | MQTTnet | 🟡 Partial | Yes | IoT, edge devices |
 
+### Use Case: Native Jupyter Kernel (ZBus.ZeroMQ)
+
+Jupyter's wire protocol is just 5 ZMQ sockets with JSON messages. A ZBus.ZeroMQ adapter
+would let **Dyalog APL be its own Jupyter kernel** — no Python mediation:
+
+```
+┌─────────────────────────────────────────────────┐
+│  Jupyter Notebook / Lab                         │
+│    ↕ ZMQ (ROUTER/PUB/REP)                      │
+│  Dyalog APL + ZBus.ZeroMQ.dll                  │
+│    - execute_request → ⍎ code directly          │
+│    - complete_request → ⎕NL-based completion    │
+│    - inspect_request → ⎕CR / ⎕NR introspection │
+│    - kernel_info_reply → language metadata      │
+└─────────────────────────────────────────────────┘
+```
+
+**Why this is ideal:**
+- The ZBus waitpoint loop IS the Jupyter dispatch loop (wait → event type → handle → respond)
+- APL executes code directly — no subprocess, no string-piping, no re-serialization
+- Tab completion via `⎕NL`, introspection via `⎕CR`/`⎕NR`, error reporting via `⎕DM`
+- Heartbeat is trivial (one socket echoing bytes)
+- Rich output via MIME bundles (text/plain from `⍕`, text/html from user-defined formatters)
+
+**Current state of art:** The existing Dyalog Jupyter kernel uses Python as a mediator —
+launching Dyalog as a subprocess and piping code through RIDE or stdin. Every hop adds
+latency and fragility. ZBus.ZeroMQ eliminates all of that.
+
 ## Deployment & Packaging
 
 - NuGet package for the C# library (ZFormat + ZBus + ZBus.Nats)
