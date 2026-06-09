@@ -62,7 +62,7 @@ public sealed class NatsAdapter : IAdapter, IDisposable
     private void RecordError(Exception ex, string context)
     {
         var msg = $"[{DateTime.UtcNow:HH:mm:ss.fff}] {context}: {ex.GetType().Name}: {ex.Message}";
-        var idx = Interlocked.Increment(ref _errorRingIndex) % ErrorRingSize;
+        var idx = Interlocked.Increment(ref _errorRingIndex) & (ErrorRingSize - 1);
         _errorRing[idx] = msg;
         Interlocked.Increment(ref _errorCount);
     }
@@ -892,7 +892,7 @@ public sealed class NatsAdapter : IAdapter, IDisposable
         {
             // Return the most recent error from the ring buffer or static store
             var staticErr = GetLastStaticError(_rootName);
-            var ringIdx = (_errorRingIndex % ErrorRingSize);
+            var ringIdx = (_errorRingIndex & (ErrorRingSize - 1));
             var ringErr = _errorRing[ringIdx];
             // Return whichever is more recent (static errors include timestamp)
             var err = staticErr ?? ringErr;

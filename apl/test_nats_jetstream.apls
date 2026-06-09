@@ -18,7 +18,7 @@ dll←'D:\devel\Z-Format\src\ZBus.Nats\bin\Release\net10.0\win-x64\publish\ZBus.
 'nats_stream'       ⎕NA 'I4 ',dll,'|zbus_nats_stream <0T1 <0T1 =Z'
 'nats_jspub'        ⎕NA 'I4 ',dll,'|zbus_nats_jspub <0T1 <0T1 =Z'
 'nats_consumer'     ⎕NA 'I4 ',dll,'|zbus_nats_consumer <0T1 <0T1 <0T1 =Z'
-'nats_ack'          ⎕NA 'I4 ',dll,'|zbus_nats_ack <0T1 I4'
+'nats_ack'          ⎕NA 'I4 ',dll,'|zbus_nats_ack <0T1 I8'
 
 ⎕←'══════════════════════════════════════════'
 ⎕←' ZBus.Nats JetStream Tests'

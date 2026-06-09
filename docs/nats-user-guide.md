@@ -226,8 +226,8 @@ Messages arrive as `JsMsg` events:
 ### Ack / Nak
 
 ```apl
-'ack' ⎕NA 'I4 ',dll,'|zbus_nats_ack <0T1 I4'
-'nak' ⎕NA 'I4 ',dll,'|zbus_nats_nak <0T1 I4'
+'ack' ⎕NA 'I4 ',dll,'|zbus_nats_ack <0T1 I8'
+'nak' ⎕NA 'I4 ',dll,'|zbus_nats_nak <0T1 I8'
 rc←ack consumerName seqno
 rc←nak consumerName seqno    ⍝ negative ack → redelivery
 ```

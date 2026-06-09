@@ -91,7 +91,7 @@ Default (positive timeout) uses general delivery — idiomatic for single event 
 | `zbus_nats_stream_delete` | `I4 dll\|zbus_nats_stream_delete <0T1` | `rc←nats_stream_delete 'N1.ORDERS'` |
 | `zbus_nats_jspub` | `I4 dll\|zbus_nats_jspub <0T1 <0T1 =Z` | `(rc ack)←nats_jspub 'N1' 'orders.new' payload` |
 | `zbus_nats_consumer` | `I4 dll\|zbus_nats_consumer <0T1 <0T1 <0T1 =Z` | `(rc name)←nats_consumer 'N1' 'ORDERS' 'proc' 'all'` |
-| `zbus_nats_ack` | `I4 dll\|zbus_nats_ack <0T1 I4` | `rc←nats_ack 'N1.ORDERS.proc' seqNo` |
+| `zbus_nats_ack` | `I4 dll\|zbus_nats_ack <0T1 I8` | `rc←nats_ack 'N1.ORDERS.proc' seqNo` |
 
 **Stream configuration options** (via Nx2 nested matrix as last element of =Z input):
 

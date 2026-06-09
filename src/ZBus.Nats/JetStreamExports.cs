@@ -297,11 +297,11 @@ public static unsafe class JetStreamExports
 
     /// <summary>
     /// Acknowledge a JetStream message.
-    /// ⎕NA: 'I4 ZBus.Nats|zbus_nats_ack &lt;0T1 I4'
+    /// ⎕NA: 'I4 ZBus.Nats|zbus_nats_ack &lt;0T1 I8'
     /// APL: rc ← nats_ack 'N1.ORDERS.proc' seqNo
     /// </summary>
     [UnmanagedCallersOnly(EntryPoint = "zbus_nats_ack")]
-    public static int ZBusNatsAck(nint consumerNamePtr, int seq)
+    public static int ZBusNatsAck(nint consumerNamePtr, long seq)
     {
         try
         {
@@ -323,11 +323,11 @@ public static unsafe class JetStreamExports
 
     /// <summary>
     /// Negative-acknowledge a JetStream message (request redelivery).
-    /// ⎕NA: 'I4 ZBus.Nats|zbus_nats_nak &lt;0T1 I4'
+    /// ⎕NA: 'I4 ZBus.Nats|zbus_nats_nak &lt;0T1 I8'
     /// APL: rc ← nats_nak 'N1.ORDERS.proc' seqNo
     /// </summary>
     [UnmanagedCallersOnly(EntryPoint = "zbus_nats_nak")]
-    public static int ZBusNatsNak(nint consumerNamePtr, int seq)
+    public static int ZBusNatsNak(nint consumerNamePtr, long seq)
     {
         try
         {
