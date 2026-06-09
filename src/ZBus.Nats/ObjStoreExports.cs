@@ -42,8 +42,10 @@ public static unsafe class ObjStoreExports
                 return ReturnCodes.OK;
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(rootNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(root, ex, "zbus_nats_obj");
             ZWriter.WriteToNative((nint)storeZ, ZValue.EmptyChar);
             return ReturnCodes.InternalError;
         }
@@ -76,8 +78,10 @@ public static unsafe class ObjStoreExports
                 return ReturnCodes.OK;
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(storeNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_nats_obj_get");
             ZWriter.WriteToNative((nint)outZ, ZValue.EmptyNumeric);
             return ReturnCodes.InternalError;
         }
@@ -110,8 +114,10 @@ public static unsafe class ObjStoreExports
                     .GetAwaiter().GetResult();
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(storeNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_nats_obj_put");
             return ReturnCodes.InternalError;
         }
     }
@@ -136,8 +142,10 @@ public static unsafe class ObjStoreExports
                     .GetAwaiter().GetResult();
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(storeNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_nats_obj_del");
             return ReturnCodes.InternalError;
         }
     }
@@ -168,8 +176,10 @@ public static unsafe class ObjStoreExports
                 return ReturnCodes.OK;
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(storeNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_nats_obj_watch");
             ZWriter.WriteToNative((nint)outZ, ZValue.EmptyChar);
             return ReturnCodes.InternalError;
         }

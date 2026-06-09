@@ -156,41 +156,105 @@ Persistent messaging with at-least-once delivery guarantees.
 ### Create Stream
 
 ```apl
-'stream' ⎕NA 'I4 ',dll,'|zbus_nats_stream <0T1 =Z'
+'stream'       ⎕NA 'I4 ',dll,'|zbus_nats_stream <0T1 <0T1 =Z'
+'stream_purge' ⎕NA 'I4 ',dll,'|zbus_nats_stream_purge <0T1'
+'stream_delete'⎕NA 'I4 ',dll,'|zbus_nats_stream_delete <0T1'
+```
+
+**Simple — single subject:**
+```apl
 (rc streamName)←stream 'N1' 'ORDERS' 'orders.>'
 ```
 
-The `=Z` input carries the subject filter; output is the full stream name.
+**Multiple subjects:**
+```apl
+(rc streamName)←stream 'N1' 'ORDERS' ('orders.>' 'orders.new')
+```
+
+**With config options** — append an Nx2 options matrix:
+```apl
+opts←3 2⍴'max_msgs' 100000 'max_age_s' 86400 'storage' 'memory'
+(rc streamName)←stream 'N1' 'ORDERS' ('orders.>' opts)
+```
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `max_msgs` | integer | Max messages retained |
+| `max_bytes` | integer | Max total bytes retained |
+| `max_age_s` | number | Max message age in seconds |
+| `retention` | string | `'limits'` (default), `'interest'`, `'workqueue'` |
+| `storage` | string | `'file'` (default), `'memory'` |
+
+Streams are idempotent — calling `nats_stream` with the same name and subjects
+updates the config. Streams persist on the NATS server across script runs.
+
+### Purge / Delete
+
+```apl
+⍝ Remove all messages but keep the stream
+rc←stream_purge ⊂streamName
+
+⍝ Delete the stream entirely (and all its consumers)
+rc←stream_delete ⊂streamName
+```
 
 ### Publish with Acknowledgement
 
 ```apl
-'jspub' ⎕NA 'I4 ',dll,'|zbus_nats_jspub <0T1 <0T1 <Z >Z'
-(rc ack)←jspub 'N1.ORDERS' 'orders.new' payload 0
+'jspub' ⎕NA 'I4 ',dll,'|zbus_nats_jspub <0T1 <0T1 =Z'
+(rc ack)←jspub 'N1' 'orders.new' payload
 ⍝ ack = nested (stream seqno)
 ```
 
 ### Consumer
 
 ```apl
-'consumer' ⎕NA 'I4 ',dll,'|zbus_nats_consumer <0T1 =Z'
-(rc consumerName)←consumer 'N1.ORDERS' 'proc' 'processor'
+'consumer' ⎕NA 'I4 ',dll,'|zbus_nats_consumer <0T1 <0T1 <0T1 =Z'
+(rc consumerName)←consumer streamName 'proc' '' 'all'
 ```
 
-Messages arrive as `JsMsg` events via `wait`:
+Deliver policy (last =Z arg): `'all'`, `'last'`, `'new'`, `'last_per_subject'`.
+Filter subject (3rd arg): empty string for all, or a subject pattern.
+
+Messages arrive as `JsMsg` events:
 
 ```apl
-(rc obj evt data)←wait 'N1' 5000 0 0 0
-⍝ evt='JsMsg', data=(subject payload seq)
+(rc obj evt data)←wait consumerName 5000 0 0 0
+⍝ evt='JsMsg', data=(subject payload headers seq)
 ```
 
 ### Ack / Nak
 
 ```apl
-'ack' ⎕NA 'I4 ',dll,'|zbus_nats_ack <0T1 I8'
-'nak' ⎕NA 'I4 ',dll,'|zbus_nats_nak <0T1 I8'
-rc←ack 'N1.ORDERS.proc' seqno
-rc←nak 'N1.ORDERS.proc' seqno    ⍝ negative ack → redelivery
+'ack' ⎕NA 'I4 ',dll,'|zbus_nats_ack <0T1 I4'
+'nak' ⎕NA 'I4 ',dll,'|zbus_nats_nak <0T1 I4'
+rc←ack consumerName seqno
+rc←nak consumerName seqno    ⍝ negative ack → redelivery
+```
+
+### Burst Pattern (fire-and-forget then drain)
+
+JetStream never drops messages — unlike Core NATS which has slow-consumer
+detection. For high-volume ingestion, blast publishes then drain at your own pace:
+
+```apl
+⍝ Purge stale data
+rc←stream_purge ⊂streamName
+
+⍝ Blast 100K publishes (no consumer needed yet)
+:For i :In ⍳100000
+    (rc ack)←jspub 'N1' 'orders.new' payload
+:EndFor
+
+⍝ Create consumer after blast — stream held everything
+(rc consumerName)←consumer streamName 'drain' '' 'all'
+
+⍝ Drain at leisure
+:While drained<100000
+    (rc obj evt data)←wait consumerName 10000 0 0 0
+    rc←ack consumerName (⊃⌽data)   ⍝ seq is last element
+    drained←drained+1
+:EndWhile
 ```
 
 ## Key/Value Store
@@ -308,9 +372,17 @@ rc←pub 'N1' replyTo 'result=42'
 
 ```apl
 'getprop' ⎕NA 'I4 ',dll,'|zbus_getprop <0T1 <0T1 >Z'
-(rc val)←getprop 'N1' 'State' 0     ⍝ → 'Connected'
-(rc val)←getprop 'N1' 'Url' 0       ⍝ → 'nats://localhost:4222'
+(rc val)←getprop 'N1' 'State' 0       ⍝ → 'Connected'
+(rc val)←getprop 'N1' 'Url' 0         ⍝ → 'nats://localhost:4222'
+(rc val)←getprop 'N1' 'LastError' 0   ⍝ → most recent swallowed error (or '')
+(rc val)←getprop 'N1' 'ErrorCount' 0  ⍝ → total swallowed error count
+(rc val)←getprop 'N1' 'Errors' 0      ⍝ → nested vector of last 16 errors
 ```
+
+**Diagnostics:** Exceptions that cannot cross the ⎕NA boundary (would cause aplcore)
+are recorded in an internal ring buffer. Query `LastError` after an unexpected `rc≠0`
+to see the actual .NET exception message — invaluable for diagnosing configuration
+errors (e.g., "subjects overlap with existing stream").
 
 ### Names / Exists
 

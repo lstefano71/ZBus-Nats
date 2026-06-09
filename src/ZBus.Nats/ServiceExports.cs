@@ -55,8 +55,10 @@ public static unsafe class ServiceExports
                 return ReturnCodes.OK;
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(rootNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(root, ex, "zbus_nats_service");
             ZWriter.WriteToNative((nint)configZ, ZValue.EmptyChar);
             return ReturnCodes.InternalError;
         }
@@ -83,8 +85,10 @@ public static unsafe class ServiceExports
                     .GetAwaiter().GetResult();
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(serviceNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_nats_endpoint");
             return ReturnCodes.InternalError;
         }
     }
@@ -112,8 +116,10 @@ public static unsafe class ServiceExports
                 return ReturnCodes.OK;
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(rootNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(root, ex, "zbus_nats_svc_discover");
             ZWriter.WriteToNative((nint)outZ, ZValue.EmptyNumeric);
             return ReturnCodes.InternalError;
         }

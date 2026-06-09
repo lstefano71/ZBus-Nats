@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using ZBus;
+using ZBus.Adapters.Nats;
 using ZFormat;
 
 /// <summary>
@@ -28,8 +29,10 @@ public static unsafe class KernelExports
             ZWriter.WriteToNative((nint)outNameZ, ZValue.FromChars(root.Name));
             return ReturnCodes.OK;
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(namePtr) ?? "";
+            NatsAdapter.RecordStaticError(root, ex, "zbus_init");
             WriteEmpty(outNameZ);
             return ReturnCodes.InternalError;
         }
@@ -69,8 +72,10 @@ public static unsafe class KernelExports
             ZWriter.WriteToNative((nint)outDataZ, evt.Data);
             return ReturnCodes.OK;
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(namePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_wait");
             WriteEmpty(outObjZ);
             WriteEmpty(outEvtZ);
             WriteEmpty(outDataZ);
@@ -103,8 +108,10 @@ public static unsafe class KernelExports
             root.Close(name);
             return ReturnCodes.OK;
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(namePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_close");
             return ReturnCodes.InternalError;
         }
     }
@@ -131,8 +138,10 @@ public static unsafe class KernelExports
             ZWriter.WriteToNative((nint)outZ, ZValue.FromStringArray(children));
             return ReturnCodes.OK;
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(namePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_names");
             WriteEmpty(outZ);
             return ReturnCodes.InternalError;
         }
@@ -153,8 +162,10 @@ public static unsafe class KernelExports
             if (root == null) return ReturnCodes.NotFound;
             return root.Registry.Exists(name) ? ReturnCodes.OK : ReturnCodes.NotFound;
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(namePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_exists");
             return ReturnCodes.InternalError;
         }
     }
@@ -188,8 +199,10 @@ public static unsafe class KernelExports
             ZWriter.WriteToNative((nint)outZ, value);
             return ReturnCodes.OK;
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(namePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_getprop");
             WriteEmpty(outZ);
             return ReturnCodes.InternalError;
         }
@@ -220,8 +233,10 @@ public static unsafe class KernelExports
             var ok = root.SetProperty(name, prop, value);
             return ok ? ReturnCodes.OK : ReturnCodes.NotFound;
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(namePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_setprop");
             return ReturnCodes.InternalError;
         }
     }
@@ -254,8 +269,10 @@ public static unsafe class KernelExports
             ZWriter.WriteToNative((nint)outZ, desc);
             return ReturnCodes.OK;
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(namePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_describe");
             WriteEmpty(outZ);
             return ReturnCodes.InternalError;
         }

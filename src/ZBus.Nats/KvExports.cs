@@ -43,8 +43,10 @@ public static unsafe class KvExports
                 return ReturnCodes.OK;
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(rootNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(root, ex, "zbus_nats_kv");
             ZWriter.WriteToNative((nint)bucketZ, ZValue.EmptyChar);
             return ReturnCodes.InternalError;
         }
@@ -82,8 +84,10 @@ public static unsafe class KvExports
                 return ReturnCodes.OK;
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(bucketNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_nats_kv_get");
             ZWriter.WriteToNative((nint)outZ, ZValue.EmptyNumeric);
             return ReturnCodes.InternalError;
         }
@@ -126,8 +130,10 @@ public static unsafe class KvExports
                 return ReturnCodes.OK;
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(bucketNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_nats_kv_put");
             ZWriter.WriteToNative((nint)dataZ, ZValue.EmptyNumeric);
             return ReturnCodes.InternalError;
         }
@@ -152,8 +158,10 @@ public static unsafe class KvExports
                 return adapter.KvDeleteAsync(bucketFullName, key).GetAwaiter().GetResult();
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(bucketNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_nats_kv_del");
             return ReturnCodes.InternalError;
         }
     }
@@ -178,8 +186,10 @@ public static unsafe class KvExports
                 return string.IsNullOrEmpty(watchName) ? ReturnCodes.NotFound : ReturnCodes.OK;
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(bucketNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_nats_kv_watch");
             return ReturnCodes.InternalError;
         }
     }

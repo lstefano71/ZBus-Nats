@@ -69,14 +69,53 @@ hierarchy levels (e.g., one thread waits on root, another waits on a specific ma
 ```
 Default (positive timeout) uses general delivery — idiomatic for single event loops.
 
+### GetProperty Keys
+
+| Property | Scope | Returns |
+|----------|-------|---------|
+| `State` | root | `'Connected'`, `'Reconnecting'`, or `'Disconnected'` |
+| `Url` | root | Connection URL string |
+| `Subject` | child | NATS subject(s) for this object |
+| `LastError` | root | Most recent swallowed exception message (or `''`) |
+| `ErrorCount` | root | Total count of swallowed exceptions (integer) |
+| `Errors` | root | Nested vector of last 16 error messages |
+
+**Diagnostics:** After an unexpected `rc≠0`, query `LastError` to see the .NET exception that was swallowed (exceptions cannot cross the ⎕NA boundary — they'd cause aplcore).
+
 ### JetStream
 
 | Export | ⎕NA signature | APL call |
 |--------|--------------|----------|
-| `zbus_nats_jspub` | `I4 dll\|zbus_nats_jspub <0T1 <0T1 =Z` | `(rc ack)←nats_jspub 'N1' 'orders.new' payload` |
 | `zbus_nats_stream` | `I4 dll\|zbus_nats_stream <0T1 <0T1 =Z` | `(rc name)←nats_stream 'N1' 'ORDERS' 'orders.>'` |
+| `zbus_nats_stream_purge` | `I4 dll\|zbus_nats_stream_purge <0T1` | `rc←nats_stream_purge 'N1.ORDERS'` |
+| `zbus_nats_stream_delete` | `I4 dll\|zbus_nats_stream_delete <0T1` | `rc←nats_stream_delete 'N1.ORDERS'` |
+| `zbus_nats_jspub` | `I4 dll\|zbus_nats_jspub <0T1 <0T1 =Z` | `(rc ack)←nats_jspub 'N1' 'orders.new' payload` |
 | `zbus_nats_consumer` | `I4 dll\|zbus_nats_consumer <0T1 <0T1 <0T1 =Z` | `(rc name)←nats_consumer 'N1' 'ORDERS' 'proc' 'all'` |
 | `zbus_nats_ack` | `I4 dll\|zbus_nats_ack <0T1 I4` | `rc←nats_ack 'N1.ORDERS.proc' seqNo` |
+
+**Stream configuration options** (via Nx2 nested matrix as last element of =Z input):
+
+```apl
+⍝ Simple — single subject:
+(rc name)←nats_stream 'N1' 'ORDERS' 'orders.>'
+
+⍝ Multiple subjects:
+(rc name)←nats_stream 'N1' 'ORDERS' ('orders.>' 'orders.new')
+
+⍝ With config options (subjects + Nx2 opts):
+opts←4 2⍴'max_msgs' 100000 'max_bytes' 1073741824 'max_age_s' 86400 'storage' 'memory'
+(rc name)←nats_stream 'N1' 'ORDERS' ('orders.>' opts)
+```
+
+| Option key | Type | Description |
+|-----------|------|-------------|
+| `max_msgs` | integer | Max messages retained |
+| `max_bytes` | integer | Max total bytes retained |
+| `max_age_s` | number | Max message age in seconds |
+| `retention` | string | `'limits'` (default), `'interest'`, `'workqueue'` |
+| `storage` | string | `'file'` (default), `'memory'` |
+
+**Purge/Delete:** `nats_stream_purge` removes all messages but keeps the stream. `nats_stream_delete` removes the stream entirely (including all consumers). Both are idempotent across script runs since streams persist on the NATS server.
 
 ### Key/Value Store
 

@@ -47,8 +47,10 @@ public static unsafe class NatsExports
                 return adapter.Connect(rootName, url);
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(rootNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(root, ex, "zbus_nats_connect");
             return ReturnCodes.InternalError;
         }
     }
@@ -93,8 +95,10 @@ public static unsafe class NatsExports
                 return ReturnCodes.OK;
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(rootNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(root, ex, "zbus_nats_pub");
             return ReturnCodes.InternalError;
         }
     }
@@ -143,8 +147,10 @@ public static unsafe class NatsExports
                 return ReturnCodes.OK;
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(rootNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(root, ex, "zbus_nats_sub");
             ZWriter.WriteToNative((nint)subjectZ, ZValue.EmptyChar);
             return ReturnCodes.InternalError;
         }
@@ -213,8 +219,10 @@ public static unsafe class NatsExports
                 return ReturnCodes.OK;
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(rootNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(root, ex, "zbus_nats_request");
             ZWriter.WriteToNative((nint)dataZ, ZValue.EmptyChar);
             return ReturnCodes.InternalError;
         }

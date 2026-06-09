@@ -13,7 +13,9 @@ public static unsafe class JetStreamExports
     /// ⎕NA: 'I4 ZBus.Nats|zbus_nats_stream &lt;0T1 &lt;0T1 =Z'
     /// APL: (rc name) ← nats_stream 'N1' 'ORDERS' 'orders.>'
     /// APL: (rc name) ← nats_stream 'N1' 'ORDERS' ('orders.>' 'orders.new')
-    /// Input =Z: subject (char vector) or multiple subjects (nested vector of strings).
+    /// APL: (rc name) ← nats_stream 'N1' 'ORDERS' ('orders.>' (2 2⍴'max_msgs' 100000 'storage' 'memory'))
+    /// Input =Z: subject (char vector), subjects (nested vector), or (subjects, opts_Nx2).
+    /// Opts keys: max_msgs, max_bytes, max_age_s, retention (limits/interest/workqueue), storage (file/memory)
     /// Output =Z: the full dotted name of the stream object.
     /// </summary>
     [UnmanagedCallersOnly(EntryPoint = "zbus_nats_stream")]
@@ -31,18 +33,74 @@ public static unsafe class JetStreamExports
             var span = new ReadOnlySpan<byte>(z, totalSize);
             var value = ZReader.Read(span);
 
-            // Shape-driven: char vector = single subject, nested = multiple subjects
+            // Parse subjects and optional config
             string[] subjects;
+            long? maxMsgs = null;
+            long? maxBytes = null;
+            TimeSpan? maxAge = null;
+            string? retention = null;
+            string? storage = null;
+
             if (value.Type == ZType.Char)
             {
+                // Simple: single subject string
                 subjects = [value.AsString()];
             }
             else if (value.Type == ZType.Nested)
             {
                 var children = value.Children;
-                subjects = new string[children.Length];
-                for (int i = 0; i < children.Length; i++)
-                    subjects[i] = children[i].AsString();
+
+                // Check if last child is an Nx2 options matrix (nested with pairs)
+                // Heuristic: if last child is nested and its children are all 2-element nested vectors → options
+                bool hasOpts = children.Length >= 2
+                    && children[^1].Type == ZType.Nested
+                    && children[^1].Children.Length > 0
+                    && children[^1].Children[0].Type == ZType.Nested
+                    && children[^1].Children[0].Children.Length == 2;
+
+                if (hasOpts)
+                {
+                    // (subjects..., opts)
+                    int subCount = children.Length - 1;
+                    if (subCount == 1 && children[0].Type == ZType.Nested)
+                    {
+                        // ((sub1 sub2 ...), opts)
+                        var subChildren = children[0].Children;
+                        subjects = new string[subChildren.Length];
+                        for (int i = 0; i < subChildren.Length; i++)
+                            subjects[i] = subChildren[i].AsString();
+                    }
+                    else
+                    {
+                        // (sub1, opts) where sub1 is a char vector
+                        subjects = new string[subCount];
+                        for (int i = 0; i < subCount; i++)
+                            subjects[i] = children[i].AsString();
+                    }
+
+                    // Parse options
+                    var opts = children[^1].Children;
+                    for (int i = 0; i < opts.Length; i++)
+                    {
+                        var pair = opts[i].Children;
+                        var key = pair[0].AsString().ToLowerInvariant();
+                        switch (key)
+                        {
+                            case "max_msgs": maxMsgs = (long)pair[1].AsDouble(); break;
+                            case "max_bytes": maxBytes = (long)pair[1].AsDouble(); break;
+                            case "max_age_s": maxAge = TimeSpan.FromSeconds(pair[1].AsDouble()); break;
+                            case "retention": retention = pair[1].AsString().ToLowerInvariant(); break;
+                            case "storage": storage = pair[1].AsString().ToLowerInvariant(); break;
+                        }
+                    }
+                }
+                else
+                {
+                    // Just multiple subjects
+                    subjects = new string[children.Length];
+                    for (int i = 0; i < children.Length; i++)
+                        subjects[i] = children[i].AsString();
+                }
             }
             else
             {
@@ -51,7 +109,8 @@ public static unsafe class JetStreamExports
 
             return Dispatch.Execute<NatsAdapter>(rootName, (adapter, root) =>
             {
-                var fullName = adapter.CreateStreamAsync(rootName, streamName, streamName, subjects)
+                var fullName = adapter.CreateStreamAsync(rootName, streamName, streamName, subjects,
+                        maxMsgs, maxBytes, maxAge, retention, storage)
                     .GetAwaiter().GetResult();
                 if (string.IsNullOrEmpty(fullName))
                 {
@@ -62,9 +121,63 @@ public static unsafe class JetStreamExports
                 return ReturnCodes.OK;
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(rootNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(root, ex, "zbus_nats_stream");
             ZWriter.WriteToNative((nint)subjectsZ, ZValue.EmptyChar);
+            return ReturnCodes.InternalError;
+        }
+    }
+
+    /// <summary>
+    /// Purge all messages from a JetStream stream.
+    /// ⎕NA: 'I4 ZBus.Nats|zbus_nats_stream_purge &lt;0T1'
+    /// APL: rc ← nats_stream_purge 'N1.ORDERS'
+    /// </summary>
+    [UnmanagedCallersOnly(EntryPoint = "zbus_nats_stream_purge")]
+    public static int ZBusNatsStreamPurge(nint streamNamePtr)
+    {
+        try
+        {
+            var streamFullName = Marshal.PtrToStringAnsi(streamNamePtr) ?? "";
+            var rootName = Bus.ExtractRootSegment(streamFullName);
+
+            return Dispatch.Execute<NatsAdapter>(rootName, (adapter, root) =>
+            {
+                return adapter.PurgeStreamAsync(streamFullName).GetAwaiter().GetResult();
+            });
+        }
+        catch (Exception ex)
+        {
+            var root = Marshal.PtrToStringAnsi(streamNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_nats_stream_purge");
+            return ReturnCodes.InternalError;
+        }
+    }
+
+    /// <summary>
+    /// Delete a JetStream stream entirely.
+    /// ⎕NA: 'I4 ZBus.Nats|zbus_nats_stream_delete &lt;0T1'
+    /// APL: rc ← nats_stream_delete 'N1.ORDERS'
+    /// </summary>
+    [UnmanagedCallersOnly(EntryPoint = "zbus_nats_stream_delete")]
+    public static int ZBusNatsStreamDelete(nint streamNamePtr)
+    {
+        try
+        {
+            var streamFullName = Marshal.PtrToStringAnsi(streamNamePtr) ?? "";
+            var rootName = Bus.ExtractRootSegment(streamFullName);
+
+            return Dispatch.Execute<NatsAdapter>(rootName, (adapter, root) =>
+            {
+                return adapter.DeleteStreamAsync(streamFullName).GetAwaiter().GetResult();
+            });
+        }
+        catch (Exception ex)
+        {
+            var root = Marshal.PtrToStringAnsi(streamNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_nats_stream_delete");
             return ReturnCodes.InternalError;
         }
     }
@@ -120,8 +233,10 @@ public static unsafe class JetStreamExports
                 return ReturnCodes.OK;
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(rootNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(root, ex, "zbus_nats_jspub");
             ZWriter.WriteToNative((nint)dataZ, ZValue.EmptyChar);
             return ReturnCodes.InternalError;
         }
@@ -171,8 +286,10 @@ public static unsafe class JetStreamExports
                 return ReturnCodes.OK;
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(streamNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_nats_consumer");
             ZWriter.WriteToNative((nint)policyZ, ZValue.EmptyChar);
             return ReturnCodes.InternalError;
         }
@@ -196,8 +313,10 @@ public static unsafe class JetStreamExports
                 return adapter.JsAckAsync(consumerFullName, seq).GetAwaiter().GetResult();
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(consumerNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_nats_ack");
             return ReturnCodes.InternalError;
         }
     }
@@ -220,8 +339,10 @@ public static unsafe class JetStreamExports
                 return adapter.JsNakAsync(consumerFullName, seq).GetAwaiter().GetResult();
             });
         }
-        catch
+        catch (Exception ex)
         {
+            var root = Marshal.PtrToStringAnsi(consumerNamePtr) ?? "";
+            NatsAdapter.RecordStaticError(Bus.ExtractRootSegment(root), ex, "zbus_nats_nak");
             return ReturnCodes.InternalError;
         }
     }

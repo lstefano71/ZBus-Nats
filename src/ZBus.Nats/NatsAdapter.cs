@@ -15,6 +15,24 @@ namespace ZBus.Adapters.Nats;
 /// </summary>
 public sealed class NatsAdapter : IAdapter, IDisposable
 {
+    // Static last-error: queryable from exports even when they only have a root name.
+    // Exports catch blocks write here so the caller can retrieve via getprop 'LastError'.
+    private static readonly ConcurrentDictionary<string, string> _staticLastError = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Record an error from an export's outer catch (no adapter instance needed).</summary>
+    public static void RecordStaticError(string rootName, Exception ex, string context)
+    {
+        var msg = $"[{DateTime.UtcNow:HH:mm:ss.fff}] {context}: {ex.GetType().Name}: {ex.Message}";
+        _staticLastError[rootName] = msg;
+    }
+
+    /// <summary>Get the last static error for a root (for getprop).</summary>
+    public static string? GetLastStaticError(string rootName)
+    {
+        _staticLastError.TryGetValue(rootName, out var err);
+        return err;
+    }
+
     private IEventPoster _poster = null!;
     private IObjectRegistry _registry = null!;
     private NatsConnection? _connection;
@@ -35,6 +53,20 @@ public sealed class NatsAdapter : IAdapter, IDisposable
     // Pending JsMsg keyed by seq number for ack/nak
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<long, INatsJSMsg<byte[]>>> _pendingAcks = new(StringComparer.OrdinalIgnoreCase);
 
+    // Diagnostic: ring buffer of last N swallowed exceptions (queryable via getprop 'LastError')
+    private const int ErrorRingSize = 16;
+    private readonly string[] _errorRing = new string[ErrorRingSize];
+    private int _errorRingIndex;
+    private long _errorCount;
+
+    private void RecordError(Exception ex, string context)
+    {
+        var msg = $"[{DateTime.UtcNow:HH:mm:ss.fff}] {context}: {ex.GetType().Name}: {ex.Message}";
+        var idx = Interlocked.Increment(ref _errorRingIndex) % ErrorRingSize;
+        _errorRing[idx] = msg;
+        Interlocked.Increment(ref _errorCount);
+    }
+
     // Pre-connect options accumulated via SetProperty
     private string? _url;
 
@@ -54,7 +86,7 @@ public sealed class NatsAdapter : IAdapter, IDisposable
     {
         if (_disposed) return;
         try { _poster.PostEvent(objectName, eventType, data); }
-        catch { /* Swallow — prevents unhandled exceptions from crossing into native code */ }
+        catch (Exception ex) { RecordError(ex, $"SafePost({objectName},{eventType})"); }
     }
 
     /// <summary>
@@ -65,7 +97,7 @@ public sealed class NatsAdapter : IAdapter, IDisposable
     {
         if (_disposed) return;
         try { _poster.PostTargeted(objectName, eventType, data); }
-        catch { /* swallow */ }
+        catch (Exception ex) { RecordError(ex, $"SafePostTargeted({objectName},{eventType})"); }
     }
 
     /// <summary>
@@ -294,13 +326,31 @@ public sealed class NatsAdapter : IAdapter, IDisposable
     /// <summary>
     /// Create or update a JetStream stream. Returns the full object name.
     /// </summary>
-    public async Task<string> CreateStreamAsync(string rootName, string leafName, string streamName, string[] subjects)
+    public async Task<string> CreateStreamAsync(string rootName, string leafName, string streamName, string[] subjects,
+        long? maxMsgs = null, long? maxBytes = null, TimeSpan? maxAge = null, string? retention = null, string? storage = null)
     {
         if (_js == null) return "";
 
         var fullName = $"{rootName}.{leafName}";
 
         var config = new StreamConfig(streamName, subjects);
+        if (maxMsgs.HasValue) config.MaxMsgs = maxMsgs.Value;
+        if (maxBytes.HasValue) config.MaxBytes = maxBytes.Value;
+        if (maxAge.HasValue) config.MaxAge = maxAge.Value;
+        if (retention != null)
+            config.Retention = retention switch
+            {
+                "interest" => StreamConfigRetention.Interest,
+                "workqueue" => StreamConfigRetention.Workqueue,
+                _ => StreamConfigRetention.Limits
+            };
+        if (storage != null)
+            config.Storage = storage switch
+            {
+                "memory" => StreamConfigStorage.Memory,
+                _ => StreamConfigStorage.File
+            };
+
         var stream = await _js.CreateOrUpdateStreamAsync(config);
 
         var registeredLeaf = fullName[(rootName.Length + 1)..];
@@ -310,6 +360,37 @@ public sealed class NatsAdapter : IAdapter, IDisposable
         _objectTypes[fullName] = "Stream";
 
         return fullName;
+    }
+
+    /// <summary>
+    /// Purge all messages from a stream.
+    /// </summary>
+    public async Task<int> PurgeStreamAsync(string streamFullName)
+    {
+        if (!_streams.TryGetValue(streamFullName, out var stream))
+            return ReturnCodes.NotFound;
+        await stream.PurgeAsync(new StreamPurgeRequest());
+        return ReturnCodes.OK;
+    }
+
+    /// <summary>
+    /// Delete a stream entirely.
+    /// </summary>
+    public async Task<int> DeleteStreamAsync(string streamFullName)
+    {
+        if (_js == null) return ReturnCodes.InvalidHandle;
+        if (!_streams.TryGetValue(streamFullName, out _))
+            return ReturnCodes.NotFound;
+
+        // Extract the NATS stream name from our object types
+        var streamName = streamFullName[(streamFullName.LastIndexOf('.') + 1)..];
+        await _js.DeleteStreamAsync(streamName);
+
+        _streams.TryRemove(streamFullName, out _);
+        _subjectMap.TryRemove(streamFullName, out _);
+        _objectTypes.TryRemove(streamFullName, out _);
+        _registry.Unregister(streamFullName);
+        return ReturnCodes.OK;
     }
 
     /// <summary>
@@ -807,6 +888,25 @@ public sealed class NatsAdapter : IAdapter, IDisposable
             _subjectMap.TryGetValue(objectName, out var subj);
             return subj != null ? ZValue.FromChars(subj) : null;
         }
+        if (propertyName.Equals("LastError", StringComparison.OrdinalIgnoreCase))
+        {
+            // Return the most recent error from the ring buffer or static store
+            var staticErr = GetLastStaticError(_rootName);
+            var ringIdx = (_errorRingIndex % ErrorRingSize);
+            var ringErr = _errorRing[ringIdx];
+            // Return whichever is more recent (static errors include timestamp)
+            var err = staticErr ?? ringErr;
+            return err != null ? ZValue.FromChars(err) : ZValue.EmptyChar;
+        }
+        if (propertyName.Equals("ErrorCount", StringComparison.OrdinalIgnoreCase))
+            return ZValue.FromInt32((int)Interlocked.Read(ref _errorCount));
+        if (propertyName.Equals("Errors", StringComparison.OrdinalIgnoreCase))
+        {
+            // Return all non-null entries from the ring
+            var errors = _errorRing.Where(e => e != null).ToArray();
+            if (errors.Length == 0) return ZValue.EmptyChar;
+            return ZValue.Nested(errors.Select(e => ZValue.FromChars(e!)).ToArray());
+        }
         return null;
     }
 
@@ -821,13 +921,14 @@ public sealed class NatsAdapter : IAdapter, IDisposable
         _disposed = true;
         foreach (var cts in _subscriptions.Values)
         {
-            try { cts.Cancel(); } catch { }
-            try { cts.Dispose(); } catch { }
+            try { cts.Cancel(); } catch (Exception ex) { RecordError(ex, "Dispose.Cancel"); }
+            try { cts.Dispose(); } catch (Exception ex) { RecordError(ex, "Dispose.CtsDispose"); }
         }
         _subscriptions.Clear();
         _subjectMap.Clear();
         _objectTypes.Clear();
-        try { _connection?.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
+        try { _connection?.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+        catch (Exception ex) { RecordError(ex, "Dispose.Connection"); }
     }
 
     // ═══════════════════════════════════════════════════════════════
