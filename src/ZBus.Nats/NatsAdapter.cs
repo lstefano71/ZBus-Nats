@@ -54,7 +54,7 @@ public sealed class NatsAdapter : IAdapter, IDisposable
     {
         if (_disposed) return;
         try { _poster.PostEvent(objectName, eventType, data); }
-        catch { /* swallow — adapter is shutting down or poster is disposed */ }
+        catch { /* Swallow — prevents unhandled exceptions from crossing into native code */ }
     }
 
     /// <summary>
@@ -179,7 +179,13 @@ public sealed class NatsAdapter : IAdapter, IDisposable
     {
         try
         {
-            await foreach (var msg in _connection!.SubscribeAsync<byte[]>(subject, queueGroup, cancellationToken: ct))
+            // Use a large subscription channel to prevent slow-consumer drops during bursts.
+            // Default is 1000 with BoundedChannelFullMode.Wait which blocks the socket reader.
+            var subOpts = new NatsSubOpts
+            {
+                ChannelOpts = new NatsSubChannelOpts { Capacity = 16384 }
+            };
+            await foreach (var msg in _connection!.SubscribeAsync<byte[]>(subject, queueGroup, opts: subOpts, cancellationToken: ct))
             {
                 var headersValue = ConvertHeaders(msg.Headers);
                 var data = ZValue.Nested(

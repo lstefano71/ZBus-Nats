@@ -290,4 +290,36 @@ public class WaitpointTreeLeafDeliveryTests
 
         tree.Dispose();
     }
+
+    [Fact]
+    public void BlastAndDrain_10K_NoLoss()
+    {
+        // Mirrors the APL blast+drain pattern: post 10K rapidly, then drain all.
+        // No active waiter during the blast phase.
+        var tree = new WaitpointTree("R");
+        const int count = 10000;
+
+        // Establish the waitpoint (simulates warmup)
+        tree.PostGeneral("R.sub", new BusEvent("R.sub", "Data", ZValue.EmptyNumeric, false));
+        var warmup = tree.Wait("R.sub", 100);
+        Assert.NotNull(warmup);
+
+        // Blast — no active waiter
+        for (int i = 0; i < count; i++)
+        {
+            tree.PostGeneral("R.sub", new BusEvent("R.sub", "Data", ZValue.EmptyNumeric, false));
+        }
+
+        // Drain
+        int drained = 0;
+        while (true)
+        {
+            var evt = tree.Wait("R.sub", 100);
+            if (evt == null) break;
+            drained++;
+        }
+
+        Assert.Equal(count, drained);
+        tree.Dispose();
+    }
 }

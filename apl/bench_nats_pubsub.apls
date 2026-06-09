@@ -1,5 +1,7 @@
-﻿⍝ ZBus.Nats pub/sub benchmarks for Dyalog APL
+⍝ ZBus.Nats pub/sub benchmarks for Dyalog APL
 ⍝ Requires nats-server running on localhost:4222
+⍝ Run with: & "D:\devel\dyalog\20.0\scriptbin\dyalogscript.ps1" .\apl\bench_nats_pubsub.apls
+
 
 ⎕IO ⎕ML←1
 
@@ -17,7 +19,6 @@ dll←'D:\devel\Z-Format\src\ZBus.Nats\bin\Release\net10.0\win-x64\publish\ZBus.
 fail←{⎕←⍵ ⋄ ⎕OFF 1}
 payload_eq←{expected←⍺ ⋄ actual←⍵ ⋄ (actual≡expected)∨((⎕UCS actual)≡expected)}
 msg_payload←{3⊃⍵}
-
 ⎕←'════════════════════════════════════════════════════════════'
 ⎕←' ZBus.Nats Pub/Sub Benchmark'
 ⎕←'════════════════════════════════════════════════════════════'
@@ -39,12 +40,13 @@ rtCounts←5000 5000 2500 1000
 ⍝ No subscriber during timed section — pure publish rate measurement.
 ⍝ Validate correctness once per payload size, then close the sub.
 
-⎕←'Fire-and-forget publish throughput'
+⎕←'[1/4] Fire-and-forget publish throughput'
 ⎕←'size_bytes  count  msg/s  avg_latency_us  elapsed_s'
 :For idx :In ⍳≢sizes
     payloadSize←idx⊃sizes
     msgCount←idx⊃fireCounts
     payload←payloadSize⍴'A'
+    ⎕←'  ... ',(⍕payloadSize),'B × ',(⍕msgCount)
 
     ⍝ Validate: subscribe, send 10, confirm receipt, then close sub
     (rc valSub)←nats_sub 'N1' ('val',⍕idx) 'bench.fire'
@@ -75,12 +77,13 @@ rtCounts←5000 5000 2500 1000
 ⍝ Wait on LEAF (subscription name) — tests the leaf waitpoint fix.
 
 ⎕←''
-⎕←'Publish + receive round-trip throughput (LEAF WAIT)'
+⎕←'[2/4] Publish + receive round-trip throughput (LEAF WAIT)'
 ⎕←'size_bytes  count  msg/s  avg_latency_us  elapsed_s'
 :For idx :In ⍳≢sizes
     payloadSize←idx⊃sizes
     msgCount←idx⊃rtCounts
     payload←payloadSize⍴'B'
+    ⎕←'  ... ',(⍕payloadSize),'B × ',(⍕msgCount)
 
     (rc rtSub)←nats_sub 'N1' ('rt',⍕idx) 'bench.rt'
     :If rc≠0 ⋄ fail 'FATAL: rt sub failed rc=',⍕rc ⋄ :EndIf
@@ -115,13 +118,14 @@ rtCounts←5000 5000 2500 1000
 ⍝ Buffer is 16K — counts must fit. Measures real delivery throughput.
 
 ⎕←''
-⎕←'Publish throughput with 1 active subscriber (blast + drain)'
+⎕←'[3/4] Publish throughput with 1 active subscriber (blast + drain)'
 ⎕←'size_bytes  count  pub_msg/s  drain_msg/s  total_elapsed_s'
-deliveryCounts←10000 10000 5000 2000
+deliveryCounts←5000 5000 10000 1000
 :For idx :In ⍳≢sizes
     payloadSize←idx⊃sizes
     msgCount←idx⊃deliveryCounts
     payload←payloadSize⍴'C'
+    ⎕←'  ... ',(⍕payloadSize),'B × ',(⍕msgCount),' (blast+drain)'
 
     (rc subName)←nats_sub 'N1' ('ds',⍕idx) 'bench.delivery'
     :If rc≠0 ⋄ fail 'FATAL: delivery sub failed rc=',⍕rc ⋄ :EndIf
@@ -164,7 +168,7 @@ deliveryCounts←10000 10000 5000 2000
 ⍝ 1 publish → N subscribers each receive the message. Measures fan-out cost.
 
 ⎕←''
-⎕←'Fan-out: 1 pub → N subs (round-trip per message)'
+⎕←'[4/4] Fan-out: 1 pub → N subs (round-trip per message)'
 ⎕←'num_subs  size_bytes  count  msg/s  elapsed_s'
 fanSubs←1 2 4
 fanSize←256
@@ -172,6 +176,7 @@ fanCount←2000
 payload←fanSize⍴'F'
 
 :For numSubs :In fanSubs
+    ⎕←'  ... ',(⍕numSubs),' subs × ',(⍕fanCount)
     subNames←⍬
     :For s :In ⍳numSubs
         (rc sn)←nats_sub 'N1' ('fan',(⍕numSubs),'s',⍕s) 'bench.fanout'
