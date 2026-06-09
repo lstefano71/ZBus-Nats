@@ -127,4 +127,4 @@ docs/              Documentation
 
 ## License
 
-Proprietary. See LICENSE file.
+[The Unlicense](LICENSE) — public domain. Do whatever you want with it.
